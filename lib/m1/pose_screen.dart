@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
+import '../m2/pixel_art.dart';
 import '../m2/repel_game.dart';
+import '../m2/shop_panel.dart';
 import 'pose_detector_service.dart';
 import 'pose_overlay.dart';
 import 'pushup_counter.dart';
@@ -124,6 +126,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
           final reps = _counter.update(angle, _lastPoseAt!);
           if (reps != null) {
             _game.onRep(); // a counted pushup = one shot at the monsters
+            HapticFeedback.mediumImpact(); // feel every rep without looking
           }
         }
       }
@@ -248,23 +251,46 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '${_counter.reps}',
-                    style: const TextStyle(
-                      fontSize: 72,
-                      height: 1,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
-                      shadows: [Shadow(blurRadius: 12, color: Colors.black54)],
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    transitionBuilder: (child, animation) {
+                      final curved = CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOut,
+                      );
+                      // Old number expands out, new one pops in — pixel feel.
+                      return FadeTransition(
+                        opacity: curved,
+                        child: ScaleTransition(
+                          scale: Tween<double>(begin: 1.35, end: 1.0)
+                              .animate(curved),
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: Text(
+                      '${_counter.reps}',
+                      key: ValueKey(_counter.reps),
+                      style: const TextStyle(
+                        fontFamily: kPixelFont,
+                        fontSize: 56,
+                        height: 1,
+                        color: kWhite,
+                        shadows: [
+                          Shadow(color: kInk, offset: Offset(3, 3), blurRadius: 0),
+                        ],
+                      ),
                     ),
                   ),
                   const Text(
                     'PUSHUPS',
                     style: TextStyle(
-                      letterSpacing: 4,
-                      fontSize: 13,
-                      color: Colors.deepOrangeAccent,
-                      fontWeight: FontWeight.bold,
+                      fontFamily: kPixelFont,
+                      fontSize: 10,
+                      color: kOrange,
+                      shadows: [
+                        Shadow(color: kInk, offset: Offset(1, 1), blurRadius: 0),
+                      ],
                     ),
                   ),
                 ],
@@ -281,9 +307,8 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.deepOrange.shade400),
+                  color: const Color(0xCC0D0B14),
+                  border: Border.all(color: kInk, width: 2),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -291,18 +316,19 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                     Container(
                       width: 8,
                       height: 8,
-                      decoration: BoxDecoration(
-                        color: poseAge != null && poseAge.inMilliseconds < 1500
-                            ? Colors.greenAccent.shade400
-                            : Colors.grey,
-                        shape: BoxShape.circle,
-                      ),
+                      color: poseAge != null && poseAge.inMilliseconds < 1500
+                          ? kGreen
+                          : const Color(0xFF6B6680),
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'M1 · ${_inferenceFps.toStringAsFixed(0)} fps '
-                      '· ${_service.lastInference.inMilliseconds} ms',
-                      style: const TextStyle(fontSize: 13),
+                      'M1 ${_inferenceFps.toStringAsFixed(0)} FPS '
+                      '${_service.lastInference.inMilliseconds} MS',
+                      style: const TextStyle(
+                        fontFamily: kPixelFont,
+                        fontSize: 10,
+                        color: kWhite,
+                      ),
                     ),
                   ],
                 ),
@@ -320,12 +346,14 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
+                  color: const Color(0xCC0D0B14),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: const Color(0xFF3A3450)),
                 ),
                 child: Text(
                   'angle ${_elbowAngle?.toStringAsFixed(0) ?? "--"}°'
                   ' · ${_counter.phase.name.toUpperCase()}'
+                  ' · ${_counter.isCalibrated ? "CAL ${_counter.downAngle!.toStringAsFixed(0)}/${_counter.upAngle!.toStringAsFixed(0)}°" : "CALIBRATING…"}'
                   '\nrot $rotation° · sensor ${widget.camera.sensorOrientation}°'
                   ' · frame ${_imageSize?.width.toInt() ?? "?"}'
                   '×${_imageSize?.height.toInt() ?? "?"}',
@@ -346,8 +374,9 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                 decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(16),
+                  color: const Color(0xCC0D0B14),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: kInk, width: 2),
                 ),
                 child: const Text(
                   'Step back — let the camera see your whole body',
@@ -362,17 +391,38 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
               alignment: Alignment.bottomRight,
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: IconButton.filled(
-                  onPressed: () => setState(() => _counter.reset()),
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Reset counter',
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.black54,
+                child: Tooltip(
+                  message: 'Reset counter',
+                  child: GestureDetector(
+                    onTap: () => setState(() => _counter.reset()),
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xCC0D0B14),
+                        border: Border.all(color: kInk, width: 2),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: kInk,
+                            offset: Offset(0, 3),
+                            blurRadius: 0,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.refresh,
+                        size: 22,
+                        color: kWhite,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
           ),
+
+          // M3: between-waves shop / defeat screen — topmost layer so it
+          // covers the HUD while the player rests and shops.
+          ShopPanel(game: _game),
         ],
       ),
     );

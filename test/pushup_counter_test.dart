@@ -32,7 +32,27 @@ void main() {
     });
   });
 
-  group('PushupCounter', () {
+  group('PushupCounter calibration', () {
+    test('does not arm until the observed span is wide enough', () {
+      final c = counter();
+      feed(c, 160, t0);
+      feed(c, 150, t0.add(const Duration(seconds: 1))); // span only 10°
+      expect(c.isCalibrated, isFalse);
+      expect(c.phase, PushupPhase.unknown);
+      expect(c.reps, 0);
+    });
+
+    test('learns thresholds from the observed range (compressed camera)', () {
+      // Simulates a foreshortened floor view: top looks like 132°, bottom 88°.
+      final c = counter();
+      feed(c, 88, t0);
+      feed(c, 132, t0.add(const Duration(seconds: 1)));
+      expect(c.isCalibrated, isTrue);
+      // down = 88 + 0.25*44 = 99, up = 88 + 0.75*44 = 121
+      expect(c.downAngle, closeTo(99, 0.5));
+      expect(c.upAngle, closeTo(121, 0.5));
+    });
+
     test('stays unknown at the bottom, arms at the top, no free rep', () {
       final c = counter();
       feed(c, 90, t0); // seen at the bottom first: stays unarmed
@@ -45,17 +65,20 @@ void main() {
       feed(c, 170, t0.add(const Duration(seconds: 3)));
       expect(c.reps, 1);
     });
+  });
 
+  group('PushupCounter counting', () {
     test('counts a clean rep: up -> down -> up', () {
       final c = counter();
-      feed(c, 170, t0); // arms extended, arms the counter
+      feed(c, 90, t0); // calibrate low first
+      feed(c, 170, t0.add(const Duration(seconds: 1))); // arms
       expect(c.phase, PushupPhase.up);
 
-      feed(c, 90, t0.add(const Duration(seconds: 1))); // go down
+      feed(c, 90, t0.add(const Duration(seconds: 2))); // go down
       expect(c.phase, PushupPhase.down);
       expect(c.reps, 0); // no rep at the bottom
 
-      final rep = feed(c, 170, t0.add(const Duration(seconds: 2))); // push up
+      final rep = feed(c, 170, t0.add(const Duration(seconds: 3))); // push up
       expect(rep, 1);
       expect(c.reps, 1);
       expect(c.phase, PushupPhase.up);
@@ -72,7 +95,7 @@ void main() {
       final c = counter();
       feed(c, 170, t0);
       feed(c, 90, t0.add(const Duration(seconds: 1)));
-      // Shake between 105 and 145 — inside the hysteresis band.
+      // Shake between 105 and 145 — must stay inside the hysteresis band.
       feed(c, 145, t0.add(const Duration(seconds: 2)));
       feed(c, 105, t0.add(const Duration(seconds: 3)));
       feed(c, 145, t0.add(const Duration(seconds: 4)));
@@ -111,12 +134,12 @@ void main() {
     test('smoothing still counts when noise is added', () {
       final c = counter(smoothing: 0.4);
       var at = t0;
-      // Arm detection with sustained "up".
+      // Observe the top with noise (establishes the high extreme).
       for (var i = 0; i < 30; i++) {
         c.update(170 + (i.isEven ? 2 : -2), at);
         at = at.add(const Duration(milliseconds: 33));
       }
-      expect(c.phase, PushupPhase.up);
+      expect(c.reps, 0);
       for (var rep = 0; rep < 5; rep++) {
         for (var i = 0; i < 20; i++) {
           c.update(90 + (i.isEven ? 3 : -3), at);
@@ -132,6 +155,17 @@ void main() {
       expect(c.reps, 5);
     });
 
+    test('range relaxation un-calibrates after a long break', () {
+      final c = counter();
+      feed(c, 90, t0);
+      feed(c, 170, t0.add(const Duration(seconds: 1)));
+      expect(c.isCalibrated, isTrue);
+      // 5 minutes of only top-position samples: the low extreme decays away.
+      feed(c, 170, t0.add(const Duration(minutes: 5)));
+      expect(c.isCalibrated, isFalse);
+      expect(c.phase, PushupPhase.unknown);
+    });
+
     test('reset clears everything', () {
       final c = counter();
       feed(c, 170, t0);
@@ -141,6 +175,7 @@ void main() {
       expect(c.reps, 0);
       expect(c.phase, PushupPhase.unknown);
       expect(c.smoothedAngle, isNull);
+      expect(c.isCalibrated, isFalse);
     });
   });
 }

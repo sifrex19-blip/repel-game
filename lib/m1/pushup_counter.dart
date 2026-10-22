@@ -1,39 +1,52 @@
 import 'dart:math';
 
-/// Counts pushups from a stream of elbow angles.
+/// Counts pushups from a stream of elbow angles with **adaptive thresholds**.
 ///
-/// State machine with hysteresis:
+/// Why adaptive: with the phone lying on the floor the camera sees the body
+/// foreshortened, so "arms extended" may look like 130° instead of 175°, and
+/// fixed thresholds (150°/100°) never fire. Instead the counter watches the
+/// angle range you actually produce and places thresholds inside it:
 ///
-///   UP (angle >= [upAngle])  --bend-->  DOWN (angle <= [downAngle])
-///   DOWN                     --extend--> UP  =>  +1 rep
+///   * it tracks the observed min/max elbow angle, both with slow decay so
+///     stale extremes from a different exercise don't stick forever,
+///   * once the observed span reaches [minCalibration] degrees it is
+///     "calibrated" and arms,
+///   * down = min + 25% of span, up = min + 75% of span (the 25/75 split
+///     leaves a wide dead zone that absorbs jitter),
+///   * UP (angle >= up)  --bend-->  DOWN (angle <= down)
+///   * DOWN              --extend--> UP  => +1 rep
 ///
-/// The dead zone between [downAngle] and [upAngle] absorbs sensor jitter,
-/// and reps are rate-limited by [minRepInterval] to reject noise bursts.
+/// Reps are rate-limited by [minRepInterval] to reject noise bursts.
 class PushupCounter {
   PushupCounter({
-    this.downAngle = 100,
-    this.upAngle = 150,
-    this.minRepInterval = const Duration(milliseconds: 500),
+    this.minRepInterval = const Duration(milliseconds: 600),
     this.smoothing = 0.4,
-  }) : assert(downAngle < upAngle);
+    this.minCalibration = 35,
+    this.rangeDecayPerSec = 0.5,
+  });
 
-  /// Elbow angle considered "bottom" of the pushup.
-  final double downAngle;
+  /// Minimum observed angle span (degrees) before the counter will arm.
+  final double minCalibration;
 
-  /// Elbow angle considered "arms extended" (top).
-  final double upAngle;
+  /// How fast the observed extremes relax toward the current angle
+  /// (degrees/second) — keeps calibration fresh across breaks/exercise changes.
+  final double rangeDecayPerSec;
 
   /// Minimum time between two counted reps.
   final Duration minRepInterval;
 
   /// Weight of each new raw sample in the smoothing filter (0..1].
-  /// 1 = no smoothing, 0.4 = fairly smooth. Purely cosmetic jitter removal.
   final double smoothing;
 
   int reps = 0;
   PushupPhase _phase = PushupPhase.unknown;
   double? _smoothedAngle;
   DateTime? _lastRepAt;
+  DateTime? _lastSampleAt;
+
+  /// Observed extremes of the elbow angle (with decay).
+  double? _observedMax;
+  double? _observedMin;
 
   PushupPhase get phase => _phase;
 
@@ -41,6 +54,25 @@ class PushupCounter {
   double? get smoothedAngle => _smoothedAngle;
 
   DateTime? get lastRepAt => _lastRepAt;
+
+  /// Current observed span in degrees (null until first sample).
+  double? get observedSpan {
+    if (_observedMax == null || _observedMin == null) return null;
+    return _observedMax! - _observedMin!;
+  }
+
+  bool get isCalibrated => (observedSpan ?? 0) >= minCalibration;
+
+  /// Current thresholds (null until calibrated).
+  double? get downAngle {
+    if (!isCalibrated) return null;
+    return _observedMin! + observedSpan! * 0.25;
+  }
+
+  double? get upAngle {
+    if (!isCalibrated) return null;
+    return _observedMin! + observedSpan! * 0.75;
+  }
 
   /// Feed one elbow-angle sample (degrees). Returns the new total rep count
   /// exactly when a rep was just completed, otherwise null.
@@ -50,20 +82,43 @@ class PushupCounter {
         : _smoothedAngle! * (1 - smoothing) + rawAngle * smoothing;
     final angle = _smoothedAngle!;
 
+    // Decay old extremes, then absorb the current sample.
+    final dt = _lastSampleAt == null
+        ? 0.0
+        : max(0, time.difference(_lastSampleAt!).inMilliseconds) / 1000.0;
+    _lastSampleAt = time;
+    final drift = rangeDecayPerSec * dt;
+    if (_observedMax != null) {
+      _observedMax = max(angle, _observedMax! - drift);
+      _observedMin = min(angle, _observedMin! + drift);
+    } else {
+      _observedMax = angle;
+      _observedMin = angle;
+    }
+
+    if (!isCalibrated) {
+      _phase = PushupPhase.unknown;
+      return null;
+    }
+    final down = downAngle!;
+    final up = upAngle!;
+
     switch (_phase) {
       case PushupPhase.unknown:
-        // Arm the counter once we see a believable top position.
-        if (angle >= upAngle) {
+        // Arm once calibration proves a real span and we sit at an extreme.
+        if (angle >= up) {
           _phase = PushupPhase.up;
+        } else if (angle <= down) {
+          _phase = PushupPhase.down;
         }
         return null;
       case PushupPhase.up:
-        if (angle <= downAngle) {
+        if (angle <= down) {
           _phase = PushupPhase.down;
         }
         return null;
       case PushupPhase.down:
-        if (angle >= upAngle) {
+        if (angle >= up) {
           _phase = PushupPhase.up;
           if (_lastRepAt == null ||
               time.difference(_lastRepAt!) >= minRepInterval) {
@@ -81,6 +136,9 @@ class PushupCounter {
     _phase = PushupPhase.unknown;
     _smoothedAngle = null;
     _lastRepAt = null;
+    _lastSampleAt = null;
+    _observedMax = null;
+    _observedMin = null;
   }
 }
 

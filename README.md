@@ -30,7 +30,7 @@ Do pushups → on-device AI counts each rep → rep = 1 attack
 - [x] **M0** — Project skeleton + live camera preview
 - [x] **M1** — Pushup rep counting via pose detection *(needs on-device tuning)*
 - [x] **M2** — Minimal combat prototype (reps = damage, waves, base HP)
-- [ ] **M3** — Coins, upgrades, save system, rest timer
+- [x] **M3** — Progression: coins, 4 upgrades, shop, local save *(+ full pixel-art visual pass)*
 - [ ] **M4** — Enemy types, bosses, sounds, real art, tutorial
 - [ ] **M5** — App store release
 
