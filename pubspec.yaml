@@ -36,6 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   camera: ^0.12.1
   google_mlkit_pose_detection: ^0.16.1
+  google_mlkit_commons: ^0.13.0
   flame: ^1.38.2
   permission_handler: ^13.0.2
 
