@@ -1,13 +1,17 @@
 import 'package:camera/camera.dart';
+import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
+import '../m2/repel_game.dart';
 import 'pose_detector_service.dart';
 import 'pose_overlay.dart';
 import 'pushup_counter.dart';
 
-/// M1 screen: live camera preview + pose skeleton + pushup rep counter.
+/// Live camera preview + pose skeleton + pushup counter (M1) with the M2
+/// combat game rendered transparently on top: every counted rep fires at
+/// the monsters marching at your castle.
 class PoseScreen extends StatefulWidget {
   const PoseScreen({
     super.key,
@@ -28,6 +32,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
 
   final _service = PoseDetectorService();
   final _counter = PushupCounter();
+  final _game = RepelGame();
 
   /// Display rotation in degrees (0/90/180/270) as reported by Android's
   /// Surface.ROTATION — portrait is the natural orientation of phones.
@@ -116,7 +121,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
         final angle = _elbowAngleOf(pose);
         _elbowAngle = angle;
         if (angle != null) {
-          _counter.update(angle, _lastPoseAt!);
+          final reps = _counter.update(angle, _lastPoseAt!);
+          if (reps != null) {
+            _game.onRep(); // a counted pushup = one shot at the monsters
+          }
         }
       }
     });
@@ -175,9 +183,11 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
       _stopStream();
+      _game.pauseEngine();
     } else if (state == AppLifecycleState.resumed) {
       _readOrientation();
       _startStream();
+      _game.resumeEngine();
     }
   }
 
@@ -191,6 +201,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopStream();
+    _game.pauseEngine();
     _service.close();
     super.dispose();
   }
@@ -221,9 +232,14 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
         fit: StackFit.expand,
         children: [
           CameraPreview(widget.controller),
+
+          // M1: skeleton so the player sees what the AI sees.
           CustomPaint(
             painter: PoseOverlayPainter(pose: _pose, mapper: mapper),
           ),
+
+          // M2: combat game floating over the camera feed.
+          GameWidget<RepelGame>(game: _game),
 
           // Rep counter (top center) — the future attack strength.
           SafeArea(
@@ -323,7 +339,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
             ),
           ),
 
-          // "Get into position" hint.
+          // "Get into position" hint (only when nobody is visible).
           if (poseAge == null || poseAge.inMilliseconds > 1500)
             Center(
               child: Container(
@@ -340,7 +356,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
               ),
             ),
 
-          // Reset button (bottom right).
+          // Reset button (bottom right) — sits above the game layer.
           SafeArea(
             child: Align(
               alignment: Alignment.bottomRight,
