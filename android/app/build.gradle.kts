@@ -34,12 +34,21 @@ android {
             // Debug keys so `flutter run --release` and sideloaded builds
             // work without a Play signing keystore.
             signingConfig = signingConfigs.getByName("debug")
-            // Shrink Kotlin/Java bytecode and strip unused resources.
-            // (The Dart AOT snapshot is already tree-shaken by the Dart
-            // compiler; ML Kit's native libs/models are kept via the
-            // conservative rules in proguard-rules.pro.)
-            isMinifyEnabled = true
-            isShrinkResources = true
+
+            // R8 minification is deliberately OFF — measured, not assumed:
+            //   unminified classes.dex = 3,148,244 B
+            //   minified   classes.dex = 3,148,412 B   (R8 saved ~0 bytes)
+            // and the minified build CRASHED AT STARTUP: R8 deleted
+            // androidx.camera.camera2.Camera2Config, which CameraX locates
+            // only through a manifest meta-data string (Class.forName ->
+            // ClassNotFoundException when the camera opens), and renamed the
+            // META-INF/services files kotlinx.coroutines uses to discover its
+            // main dispatcher (ServiceLoader -> IllegalStateException).
+            // The app's real size lives in native libs, so re-enable this
+            // only with keep rules for manifest-string/ServiceLoader
+            // reflection AND a on-device smoke test.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
