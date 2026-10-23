@@ -2,29 +2,36 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 /// Maps ML Kit landmark coordinates (normalized to the *rotated* camera
-/// image) onto screen coordinates of a full-screen, cover-fitted preview.
+/// image) onto screen coordinates of a contained, centered preview — the
+/// same fit CameraPreview uses, optionally translated into a zone ([origin])
+/// so the skeleton lands exactly on the bottom-band preview (M5).
 class PoseMapper {
   PoseMapper({
     required this.rotatedImageSize,
     required this.screenSize,
     required this.mirror,
+    this.origin = Offset.zero,
   });
 
   /// Size of the camera image after applying the rotation ML Kit was given
   /// (width/height swapped for 90°/270°).
   final Size rotatedImageSize;
 
-  /// The area the preview occupies on screen.
+  /// The area the preview occupies (camera zone size, not the full screen).
   final Size screenSize;
 
   /// Whether the preview displays a mirrored image (front camera).
   final bool mirror;
 
+  /// Top-left of the preview zone in screen coordinates (0,0 = full screen
+  /// fits the pre-M5 layout).
+  final Offset origin;
+
   late final double _scale = [
     (screenSize.width / rotatedImageSize.width),
     (screenSize.height / rotatedImageSize.height),
   ].reduce((a, b) => a < b ? a : b); // contain: CameraPreview fits the image
-                                      // inside the screen, centered
+                                      // inside the zone, centered
 
   late final double _dx = (screenSize.width - rotatedImageSize.width * _scale) / 2;
   late final double _dy = (screenSize.height - rotatedImageSize.height * _scale) / 2;
@@ -32,7 +39,10 @@ class PoseMapper {
   Offset map(double x, double y) {
     final px = _dx + x * _scale;
     final py = _dy + y * _scale;
-    return Offset(mirror ? screenSize.width - px : px, py);
+    return Offset(
+      origin.dx + (mirror ? screenSize.width - px : px),
+      origin.dy + py,
+    );
   }
 }
 

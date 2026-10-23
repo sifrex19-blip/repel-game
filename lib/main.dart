@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'camera_gate.dart';
+import 'app_settings.dart';
+import 'app_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // The game is played with the phone flat on the floor — landscape only.
+  // The phone stands upright (M5): the player sees themselves in the live
+  // camera band at the bottom while the battle plays above.
   await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
+    DeviceOrientation.portraitUp,
   ]);
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  await AppSettings.instance.load();
   runApp(const RepelApp());
 }
 
@@ -30,7 +32,7 @@ class RepelApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const CameraGate(),
+      home: const AppShell(),
     );
   }
 }

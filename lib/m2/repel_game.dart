@@ -184,6 +184,13 @@ class RepelGame extends FlameGame with TapCallbacks {
     return h & 0x7fffffff;
   }
 
+  /// The GameWidget paints this behind the world on every frame. Flame's
+  /// default is opaque black, which covered the CameraPreview layer beneath
+  /// the game and hid the player's camera completely (M5 root-cause fix) —
+  /// the background must stay clear so the camera feed shows through.
+  @override
+  Color backgroundColor() => const Color(0x00000000);
+
   @override
   Future<void> onLoad() async {
     save = await PlayerSave.load();
@@ -198,7 +205,9 @@ class RepelGame extends FlameGame with TapCallbacks {
   @override
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
-    cam.resize(size);
+    // The world occupies the top band; the camera view keeps the rest
+    // (portrait M5 layout) — the camera feeds everything below it.
+    cam.resize(Vector2(size.x, size.y * kGameZoneFraction));
     _rebuildPictures();
   }
 
@@ -955,7 +964,8 @@ class RepelGame extends FlameGame with TapCallbacks {
     switch (phase) {
       case GamePhase.intro:
         final t = introSeconds - phaseTimer;
-        final center = Vector2(size.x / 2, size.y * 0.34);
+        // Centered inside the game zone, never drifting into the camera band.
+        final center = Vector2(size.x / 2, cam.zoneHeight * 0.5);
         final step = (t * 9).floor().clamp(0, 2);
         final label = 'WAVE $wave';
         if (step >= 2) {

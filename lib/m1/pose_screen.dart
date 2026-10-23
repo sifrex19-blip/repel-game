@@ -1,13 +1,18 @@
 import 'package:camera/camera.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
+import '../app_settings.dart';
+import '../m2/game_camera.dart';
 import '../m2/pixel_art.dart';
+import '../m2/pixel_ui.dart';
 import '../m2/level_ui.dart';
 import '../m2/repel_game.dart';
 import '../m2/shop_panel.dart';
+import '../settings_panel.dart';
 import 'pose_detector_service.dart';
 import 'pose_overlay.dart';
 import 'pushup_counter.dart';
@@ -49,12 +54,36 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   int _fpsCounter = 0;
   DateTime _fpsWindow = DateTime.now();
 
+  /// Render (UI) FPS sampled once per second from frame timings — shown by
+  /// the debug overlay (Settings → Debug overlay).
+  double _renderFps = 0;
+  int _frameCount = 0;
+  DateTime _frameWindow = DateTime.now();
+
+  bool _showSettings = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
     _readOrientation();
     _startStream();
+  }
+
+  /// Rolling render-FPS meter driven by the engine's own frame timings.
+  void _onFrameTimings(List<FrameTiming> timings) {
+    _frameCount += timings.length;
+    final now = DateTime.now();
+    final elapsed = now.difference(_frameWindow).inMilliseconds;
+    if (elapsed >= 1000) {
+      final fps = _frameCount * 1000 / elapsed;
+      _frameCount = 0;
+      _frameWindow = now;
+      if (mounted && AppSettings.instance.debugOverlay) {
+        setState(() => _renderFps = fps);
+      }
+    }
   }
 
   /// Asks Android which way the screen is currently rotated.
@@ -205,6 +234,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _stopStream();
     _game.saveIfDirty();
     _game.pauseEngine();
@@ -217,6 +247,11 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
     final screen = MediaQuery.sizeOf(context);
     final rotation = _rotationForCamera();
 
+    // Portrait M5 layout: the world fights in the top band, the live camera
+    // owns everything below. Preview and skeleton share this rect exactly
+    // (CameraPreview contains + centers, the mapper does the same fit).
+    final camZone = cameraZoneOf(screen);
+
     // Landmarks are pixels of the image *after* ML Kit applied the rotation
     // we reported to it. Until the first frame, assume a portrait sensor.
     final raw = _imageSize ?? Size(screen.height, screen.width);
@@ -224,8 +259,9 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
 
     final mapper = PoseMapper(
       rotatedImageSize: rotated,
-      screenSize: screen,
+      screenSize: camZone.size,
       mirror: widget.camera.lensDirection == CameraLensDirection.front,
+      origin: camZone.topLeft,
     );
 
     final poseAge = _lastPoseAt == null
@@ -234,10 +270,36 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
+      body: ListenableBuilder(
+        listenable: AppSettings.instance,
+        builder: (context, _) {
+          final debugOn = AppSettings.instance.debugOverlay;
+          return Stack(
         fit: StackFit.expand,
         children: [
-          CameraPreview(widget.controller),
+          // Live camera feed — bottom band of the screen (M5): the player
+          // always sees themselves while the battle plays above.
+          Positioned.fromRect(
+            rect: camZone,
+            child: CameraPreview(widget.controller),
+          ),
+
+          // Pixel divider: ink bar with a beveled highlight, pinned to the
+          // seam so the two zones never bleed into each other.
+          Positioned(
+            left: 0,
+            right: 0,
+            top: camZone.top - 4,
+            child: Container(
+              height: 4,
+              decoration: const BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: kPanelLight, width: 1),
+                  bottom: BorderSide(color: kInk, width: 3),
+                ),
+              ),
+            ),
+          ),
 
           // M1: skeleton so the player sees what the AI sees.
           CustomPaint(
@@ -301,49 +363,67 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
             ),
           ),
 
-          // M1 status chip (top left).
-          SafeArea(
-            child: Align(
-              alignment: Alignment.topLeft,
-              child: Container(
-                margin: const EdgeInsets.all(12),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xCC0D0B14),
-                  border: Border.all(color: kInk, width: 2),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      color: poseAge != null && poseAge.inMilliseconds < 1500
-                          ? kGreen
-                          : const Color(0xFF6B6680),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'M1 ${_inferenceFps.toStringAsFixed(0)} FPS '
-                      '${_service.lastInference.inMilliseconds} MS',
-                      style: const TextStyle(
-                        fontFamily: kPixelFont,
-                        fontSize: 10,
-                        color: kWhite,
+          // Debug telemetry chip (top left) — behind Settings → Debug overlay.
+          if (debugOn)
+            SafeArea(
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Container(
+                  margin: const EdgeInsets.all(12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xCC0D0B14),
+                    border: Border.all(color: kInk, width: 2),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        color: poseAge != null &&
+                                poseAge.inMilliseconds < 1500
+                            ? kGreen
+                            : const Color(0xFF6B6680),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'M1 ${_inferenceFps.toStringAsFixed(0)} FPS '
+                            '${_service.lastInference.inMilliseconds} MS',
+                            style: const TextStyle(
+                              fontFamily: kPixelFont,
+                              fontSize: 10,
+                              color: kWhite,
+                            ),
+                          ),
+                          Text(
+                            'UI ${_renderFps.toStringAsFixed(0)} FPS '
+                            '· PING --',
+                            style: const TextStyle(
+                              fontFamily: kPixelFont,
+                              fontSize: 10,
+                              color: kWhite,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
 
-          // Angle / phase debug strip (bottom left) — used for on-device
-          // threshold tuning during M1 testing.
-          SafeArea(
-            child: Align(
-              alignment: Alignment.bottomLeft,
+          // Angle / phase debug strip (bottom left) — on-device threshold
+          // tuning, gated behind Settings → Debug overlay.
+          if (debugOn)
+            SafeArea(
+              child: Align(
+                alignment: Alignment.bottomLeft,
               child: Container(
                 margin: const EdgeInsets.all(12),
                 padding:
@@ -370,54 +450,68 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
             ),
           ),
 
-          // "Get into position" hint (only when nobody is visible).
+          // "Get into position" hint (only when nobody is visible) — shown
+          // over the camera band, where the player is actually looking.
           if (poseAge == null || poseAge.inMilliseconds > 1500)
-            Center(
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xCC0D0B14),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: kInk, width: 2),
-                ),
-                child: const Text(
-                  'Step back — let the camera see your whole body',
-                  style: TextStyle(fontSize: 16, color: Colors.white70),
+            Positioned.fromRect(
+              rect: camZone,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 24, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xCC0D0B14),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: kInk, width: 2),
+                  ),
+                  child: const Text(
+                    'Step back — let the camera see your whole body',
+                    style: TextStyle(fontSize: 16, color: Colors.white70),
+                  ),
                 ),
               ),
             ),
 
-          // Reset button (bottom right) — sits above the game layer.
+          // Controls (bottom right) over the camera band: settings gear +
+          // counter reset — the game HUD never reaches down here.
           SafeArea(
             child: Align(
               alignment: Alignment.bottomRight,
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: Tooltip(
-                  message: 'Reset counter',
-                  child: GestureDetector(
-                    onTap: () => setState(() => _counter.reset()),
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xCC0D0B14),
-                        border: Border.all(color: kInk, width: 2),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: kInk,
-                            offset: Offset(0, 3),
-                            blurRadius: 0,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    PixelGearButton(
+                      onPressed: () => setState(() => _showSettings = true),
+                    ),
+                    const SizedBox(width: 10),
+                    Tooltip(
+                      message: 'Reset counter',
+                      child: GestureDetector(
+                        onTap: () => setState(() => _counter.reset()),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xCC0D0B14),
+                            border: Border.all(color: kInk, width: 2),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: kInk,
+                                offset: Offset(0, 3),
+                                blurRadius: 0,
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.refresh,
-                        size: 22,
-                        color: kWhite,
+                          child: const Icon(
+                            Icons.refresh,
+                            size: 22,
+                            color: kWhite,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -431,7 +525,19 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
           // M3: between-waves shop / defeat screen — topmost layer so it
           // covers the HUD while the player rests and shops.
           ShopPanel(game: _game),
+
+          // Settings (debug overlay switches) — above everything so the
+          // gear works even while a panel is open.
+          if (_showSettings)
+            SettingsPanel(
+              onClose: () => setState(() => _showSettings = false),
+              renderFps: _renderFps,
+              inferenceFps: _inferenceFps,
+              inferenceMs: _service.lastInference.inMilliseconds,
+            ),
         ],
+          );
+        },
       ),
     );
   }

@@ -33,7 +33,7 @@ class ShopPanel extends StatelessWidget {
         final maxH = MediaQuery.sizeOf(context).height - 24;
 
         return Container(
-          color: const Color(0xB30D0B14),
+          color: const Color(0x730D0B14), // translucent: camera stays visible
           alignment: Alignment.center,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: 620, maxHeight: maxH),

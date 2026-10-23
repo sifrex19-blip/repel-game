@@ -97,6 +97,45 @@ class _PixelButtonState extends State<PixelButton> {
   }
 }
 
+/// Square ink-outlined gear button (opens settings) — shared by the home
+/// menu and the in-game HUD so both speak the same pixel language.
+class PixelGearButton extends StatefulWidget {
+  const PixelGearButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  State<PixelGearButton> createState() => _PixelGearButtonState();
+}
+
+class _PixelGearButtonState extends State<PixelGearButton> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _down = true),
+      onTapUp: (_) {
+        setState(() => _down = false);
+        widget.onPressed();
+      },
+      onTapCancel: () => setState(() => _down = false),
+      child: Transform.translate(
+        offset: Offset(0, _down ? 2 : 0),
+        child: Container(
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+            color: const Color(0xCC0D0B14),
+            border: Border.all(color: kInk, width: 2),
+          ),
+          child: const Icon(Icons.settings, size: 20, color: kWhite),
+        ),
+      ),
+    );
+  }
+}
+
 /// Hand-authored sprite as a Flutter widget (draws through the shared
 /// cached-picture renderer, so it stays crisp and cheap).
 class PixelSprite extends StatelessWidget {

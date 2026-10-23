@@ -5,6 +5,20 @@ import 'package:flame/extensions.dart';
 
 import 'pixel_art.dart';
 
+/// Portrait split (M5): the world is drawn in the top band of the screen and
+/// the live camera view owns everything below it, so the player always sees
+/// themselves at the bottom while the battle happens above.
+const double kGameZoneFraction = 0.46;
+
+/// The camera zone — bottom band of a portrait screen, in logical pixels.
+/// The camera preview and the pose skeleton both fit into this rect.
+ui.Rect cameraZoneOf(ui.Size screen) => ui.Rect.fromLTWH(
+      0,
+      screen.height * kGameZoneFraction,
+      screen.width,
+      screen.height * (1 - kGameZoneFraction),
+    );
+
 /// Fixed-arena camera for Repel (M4).
 ///
 /// Root cause of the old "broken camera": there was none. Every element was
@@ -59,9 +73,16 @@ class ArenaCamera {
   /// X offset of the world's left edge on screen (letterbox only).
   double originX = 0;
 
-  /// Recompute the mapping for a new screen size (in logical pixels).
+  /// Height of the zone [resize] was last given — the world's screen band
+  /// (top band of a portrait screen). Letterbox margins and screen-space
+  /// banners stay inside it so the camera view below is never covered.
+  double zoneHeight = virtualHeight;
+
+  /// Recompute the mapping for the game zone (the screen area the world
+  /// occupies — top band in the portrait M5 layout).
   void resize(Vector2 screen) {
     if (screen.x <= 0 || screen.y <= 0) return;
+    zoneHeight = screen.y;
     scale = screen.y / virtualHeight;
     final fit = screen.x / scale; // width the screen *could* show
     if (fit < minWorldWidth) {
@@ -100,7 +121,8 @@ class ArenaCamera {
   void endWorld(ui.Canvas canvas) => canvas.restore();
 
   /// Solid margins for screens wider than [maxWorldWidth], drawn in screen
-  /// space so the world never appears to leak past its bounds.
+  /// space so the world never appears to leak past its bounds. Limited to
+  /// the game zone — the camera view below must stay uncovered.
   void paintLetterbox(ui.Canvas canvas, Vector2 screen) {
     final world = worldWidth * scale;
     if (world >= screen.x) return;
@@ -108,9 +130,9 @@ class ArenaCamera {
     final paint = ui.Paint()
       ..isAntiAlias = false
       ..color = kInk;
-    canvas.drawRect(ui.Rect.fromLTWH(0, 0, margin, screen.y), paint);
+    canvas.drawRect(ui.Rect.fromLTWH(0, 0, margin, zoneHeight), paint);
     canvas.drawRect(
-        ui.Rect.fromLTWH(screen.x - margin, 0, margin, screen.y), paint);
+        ui.Rect.fromLTWH(screen.x - margin, 0, margin, zoneHeight), paint);
   }
 
   /// Shake offset in whole world pixels — quantized so a scaled rect never

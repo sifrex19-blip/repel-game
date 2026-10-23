@@ -26,7 +26,7 @@ class MenuPanel extends StatelessWidget {
 
         final maxH = MediaQuery.sizeOf(context).height - 24;
         return Container(
-          color: const Color(0xB30D0B14),
+          color: const Color(0x590D0B14), // translucent: camera stays visible
           alignment: Alignment.center,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: 660, maxHeight: maxH),
@@ -238,7 +238,7 @@ class VictoryPanel extends StatelessWidget {
         final isLast = snap.levelId >= kLevels.length;
         final maxH = MediaQuery.sizeOf(context).height - 24;
         return Container(
-          color: const Color(0xB30D0B14),
+          color: const Color(0x730D0B14), // translucent: camera stays visible
           alignment: Alignment.center,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: 460, maxHeight: maxH),
