@@ -974,6 +974,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
               inferenceFps: _inferenceFps,
               inferenceMs: _service.lastInference.inMilliseconds,
             ),
+
+          // M7: the little border around the whole screen — decorative and
+          // topmost, taps pass straight through it. Accent follows settings.
+          PixelScreenBorder(accent: AppSettings.instance.accent),
         ],
           );
         },

@@ -6,23 +6,63 @@ import 'pixel_art.dart';
 import 'pixel_ui.dart';
 import 'repel_game.dart';
 
-/// Main menu / level select (phase == menu): pick any unlocked level,
-/// see campaign stats, and the coin balance carried into battle.
+/// Main menu / level select (phase == menu): pick any unlocked level from
+/// a paged grid (12 cards a page over the 200-level campaign), see campaign
+/// stats, and the pushup balance carried into battle.
 ///
 /// Same pixel-UI language as the shop: ink-outlined panel, beveled cards,
 /// Press Start 2P, buttons that press into the face. Locked levels are dim
-/// and inert; cleared ones wear a gold border.
-class MenuPanel extends StatelessWidget {
+/// and inert; cleared ones wear a gold border. The grid follows the freshly
+/// unlocked level until the player browses pages by hand.
+class MenuPanel extends StatefulWidget {
   const MenuPanel({super.key, required this.game});
 
   final RepelGame game;
 
   @override
+  State<MenuPanel> createState() => _MenuPanelState();
+}
+
+class _MenuPanelState extends State<MenuPanel> {
+  /// Levels per page — 12 cards in a 4 × 3 grid.
+  static const int _perPage = 12;
+
+  static int get _pages => (kLevels.length + _perPage - 1) ~/ _perPage;
+
+  int _page = 0;
+  int _lastUnlocked = 0;
+  bool _browsed = false; // set once the player pages manually
+
+  int _pageOf(int unlocked) =>
+      ((unlocked - 1) ~/ _perPage).clamp(0, _pages - 1);
+
+  void _goto(int page) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _browsed = true;
+      _page = page.clamp(0, _pages - 1);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<GameSnapshot>(
-      valueListenable: game.snapshot,
+      valueListenable: widget.game.snapshot,
       builder: (context, snap, _) {
         if (snap.phase != GamePhase.menu) return const SizedBox.shrink();
+
+        // Jump to the page holding the next level whenever it unlocks;
+        // manual browsing wins from then on.
+        if (snap.unlockedLevel != _lastUnlocked) {
+          _lastUnlocked = snap.unlockedLevel;
+          _page = _pageOf(snap.unlockedLevel);
+          _browsed = false;
+        }
+        final page = _browsed ? _page : _pageOf(snap.unlockedLevel);
+        final pageLevels = kLevels
+            .skip(page * _perPage)
+            .take(_perPage)
+            .toList(growable: false);
 
         final maxH = MediaQuery.sizeOf(context).height - 24;
         return Container(
@@ -45,14 +85,47 @@ class MenuPanel extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _MenuHeader(snap: snap),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
+                      // Page row — arrows + "PAGE n / m" over 200 levels.
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          PixelButton(
+                            fill: kPanelDark,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8),
+                            onPressed:
+                                page == 0 ? null : () => _goto(page - 1),
+                            label: Text('<',
+                                style:
+                                    pixelText(10, page == 0 ? kDimText : kWhite)),
+                          ),
+                          const SizedBox(width: 12),
+                          Text('PAGE ${page + 1} / $_pages',
+                              style: pixelText(9, kDimText)),
+                          const SizedBox(width: 12),
+                          PixelButton(
+                            fill: kPanelDark,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8),
+                            onPressed: page >= _pages - 1
+                                ? null
+                                : () => _goto(page + 1),
+                            label: Text('>',
+                                style: pixelText(
+                                    10, page >= _pages - 1 ? kDimText : kWhite)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         alignment: WrapAlignment.center,
                         children: [
-                          for (final level in kLevels)
-                            _LevelCard(game: game, snap: snap, level: level),
+                          for (final level in pageLevels)
+                            _LevelCard(
+                                game: widget.game, snap: snap, level: level),
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -306,7 +379,7 @@ class _VictoryPanelState extends State<VictoryPanel>
                             children: [
                           if (snap.victoryBonus > 0)
                             Text(
-                              '+${snap.victoryBonus} COINS — FIRST CLEAR!',
+                              '+${snap.victoryBonus} PUSHUPS — FIRST CLEAR!',
                               style: pixelText(9, kGold),
                             )
                           else

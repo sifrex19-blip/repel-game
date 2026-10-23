@@ -30,16 +30,9 @@ double comboWindow(int comboLevel) => 3.0 + comboLevel;
 /// capped at 2.0 (11th rep in a row).
 double comboMultiplier(int comboCount) => 1.0 + min(comboCount - 1, 10) * 0.1;
 
-/// Coins earned for clearing wave [wave].
-int waveClearCoins(int wave) => 10 + 5 * wave;
-
-/// Coins dropped by one killed enemy of wave [wave].
-int killCoins(int wave, {required bool boss}) =>
-    boss ? 25 + 3 * wave : 3 + wave;
-
-/// Coins earned per counted pushup — upgrades are bought with pushups, so
-/// every rep pays the shop currency directly (combo scales it like damage:
-/// ×1.5 and up → 2 coins).
+/// Pushups are THE currency (M7): every counted pushup pays the wallet —
+/// combo scales it like damage (×1.5 and up → 2). Kills, wave clears and
+/// everything else earn NOTHING; upgrades run purely on the workout.
 int repCoins(int comboCount) => comboMultiplier(comboCount) >= 1.5 ? 2 : 1;
 
 int _baseCost(UpgradeType t) => switch (t) {
@@ -52,7 +45,7 @@ int _baseCost(UpgradeType t) => switch (t) {
 int upgradeMaxLevel(UpgradeType t) => switch (t) {
       UpgradeType.power => 10,
       UpgradeType.speed => 8,
-      UpgradeType.fortress => 8,
+      UpgradeType.fortress => 10,
       UpgradeType.combo => 5,
     };
 
@@ -71,6 +64,8 @@ String upgradeName(UpgradeType t) => switch (t) {
     };
 
 /// Short effect line for the shop card: what buying the NEXT level gives.
+/// The fortress line names the material the wall becomes at a stage break —
+/// the appearance ladder below is promised right in the shop.
 String upgradeEffect(UpgradeType t, int level) => switch (t) {
       UpgradeType.power =>
         'rep dmg ${repDamage(level)} → ${repDamage(level + 1)}',
@@ -78,12 +73,41 @@ String upgradeEffect(UpgradeType t, int level) => switch (t) {
         'auto ${(autoInterval(level)).toStringAsFixed(2)}s → '
         '${autoInterval(level + 1).toStringAsFixed(2)}s',
       UpgradeType.fortress =>
-        'base HP ${maxBaseHp(level)} → ${maxBaseHp(level + 1)}',
+        castleStage(level + 1) != castleStage(level)
+            ? 'HP ${maxBaseHp(level)}→${maxBaseHp(level + 1)} · '
+                '${castleStageName(castleStage(level))}→'
+                '${castleStageName(castleStage(level + 1))}'
+            : 'base HP ${maxBaseHp(level)} → ${maxBaseHp(level + 1)}',
       UpgradeType.combo =>
         'combo hold ${(comboWindow(level)).toStringAsFixed(0)}s → '
         '${(comboWindow(level + 1)).toStringAsFixed(0)}s · ×'
         '${comboMultiplier(level + 11).toStringAsFixed(1)} max',
     };
+
+// ---------------------------------------------------------------------------
+// Castle appearance ladder (M7) — the FORTRESS upgrade visibly rebuilds the
+// tower: a small wooden fort at level 0 → stone keep → iron-bound → plated
+// steel → gold-trimmed steel at max. Pure functions, so the shop line, the
+// renderer and the tests all agree on what the wall becomes.
+
+/// Visual build stage [0-5] for a fortress upgrade level [0-10]: two
+/// upgrade levels per stage (level 10 alone tops the ladder out).
+int castleStage(int fortressLevel) =>
+    fortressLevel.clamp(0, upgradeMaxLevel(UpgradeType.fortress)) ~/ 2;
+
+/// Short material name for a stage (shop line + tests).
+String castleStageName(int stage) => switch (stage) {
+      0 => 'WOOD',
+      1 => 'WOOD+STONE',
+      2 => 'STONE',
+      3 => 'IRON BAND',
+      4 => 'IRON PLATE',
+      _ => 'GOLD STEEL',
+    };
+
+/// Wall height in world pixels for a stage — the tower grows as it
+/// toughens: 82px wooden fort → 122px gold-trimmed keep.
+double castleHeight(int stage) => 82 + stage.clamp(0, 5) * 8.0;
 
 // ---------------------------------------------------------------------------
 // Persistent save
@@ -113,6 +137,9 @@ class PlayerSave {
   /// is shape-based, so pre-version saves migrate transparently).
   static const int saveVersion = 2;
 
+  /// Wallet of PUSHUPS (M7: pushups are THE currency — every counted rep
+  /// pays it, nothing else earns). The storage key stays `coins`, so old
+  /// balances migrate untouched.
   int coins;
   final Map<UpgradeType, int> levels;
   int bestWave;

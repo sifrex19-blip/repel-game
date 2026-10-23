@@ -8,7 +8,8 @@ void main() {
 
   group('upgrade costs', () {
     test('every upgrade starts affordable in early waves', () {
-      // Wave 1 clear alone gives 15 coins + ~4 kills ≈ 4 more.
+      // Pushups are the only income (M7): the first upgrade costs 10 —
+      // about ten counted reps, earned during the very first wave.
       for (final t in UpgradeType.values) {
         expect(upgradeCost(t, 0)! <= 15, isTrue, reason: '$t first level');
       }
@@ -69,19 +70,9 @@ void main() {
   });
 
   group('rewards', () {
-    test('wave clears pay more as waves climb', () {
-      expect(waveClearCoins(1), 15);
-      expect(waveClearCoins(10), greaterThan(waveClearCoins(5)));
-    });
-
-    test('bosses drop far more than normal enemies', () {
-      expect(killCoins(3, boss: false), 6);
-      expect(killCoins(3, boss: true), 34);
-    });
-
     test('every pushup pays coins; big combos pay double', () {
-      // Upgrades are bought with pushups: 1 coin per rep, 2 once the
-      // combo multiplier reaches ×1.5.
+      // M7: pushups are THE currency — 1 coin per counted rep, 2 once the
+      // combo multiplier reaches ×1.5. Kills and wave clears pay nothing.
       expect(repCoins(1), 1);
       expect(repCoins(5), 1); // ×1.4
       expect(repCoins(6), 2); // ×1.5
@@ -91,6 +82,39 @@ void main() {
       for (var c = 1; c <= 20; c++) {
         expect(repCoins(c), greaterThanOrEqualTo(1));
       }
+    });
+  });
+
+  group('castle appearance ladder', () {
+    test('two fortress levels per stage, capped at the top stage', () {
+      expect(castleStage(0), 0); // the small wooden fort you start with
+      expect(castleStage(1), 0);
+      expect(castleStage(2), 1);
+      expect(castleStage(4), 2);
+      expect(castleStage(9), 4);
+      expect(castleStage(upgradeMaxLevel(UpgradeType.fortress)), 5);
+      expect(castleStage(99), 5); // clamps, never crashes
+    });
+
+    test('every stage has a short shop name', () {
+      for (var s = 0; s <= 5; s++) {
+        expect(castleStageName(s).isNotEmpty, isTrue, reason: 'stage $s');
+      }
+      expect(castleStageName(0), 'WOOD');
+      expect(castleStageName(5), 'GOLD STEEL');
+    });
+
+    test('the tower grows with every stage', () {
+      for (var s = 1; s <= 5; s++) {
+        expect(castleHeight(s), greaterThan(castleHeight(s - 1)));
+      }
+      expect(castleHeight(0), 82); // small wooden fort
+      expect(castleHeight(5), 122); // gold-trimmed keep
+    });
+
+    test('fortress tops out at 10 levels and 330 HP', () {
+      expect(upgradeMaxLevel(UpgradeType.fortress), 10);
+      expect(maxBaseHp(upgradeMaxLevel(UpgradeType.fortress)), 330);
     });
   });
 

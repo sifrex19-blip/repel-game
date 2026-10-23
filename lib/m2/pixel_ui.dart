@@ -323,3 +323,77 @@ class _FlamePainter extends CustomPainter {
   @override
   bool shouldRepaint(_FlamePainter old) => old.art != art;
 }
+
+/// Thin arcade frame drawn along the physical screen edge (M7): an ink
+/// rail, a beveled inner highlight and accent corner rivets — the "little
+/// border around the screen". Pure decoration: it ignores all pointers and
+/// is layered topmost by the screens that show it.
+class PixelScreenBorder extends StatelessWidget {
+  const PixelScreenBorder({super.key, this.accent = kOrange});
+
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: CustomPaint(painter: _ScreenBorderPainter(accent)),
+    );
+  }
+}
+
+class _ScreenBorderPainter extends CustomPainter {
+  const _ScreenBorderPainter(this.accent);
+
+  final Color accent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width < 40 || size.height < 40) return;
+    final ink = Paint()
+      ..isAntiAlias = false
+      ..color = kInk;
+    const t = 3.0; // rail thickness
+
+    // Ink rail around all four edges.
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, t), ink);
+    canvas.drawRect(Rect.fromLTWH(0, size.height - t, size.width, t), ink);
+    canvas.drawRect(Rect.fromLTWH(0, 0, t, size.height), ink);
+    canvas.drawRect(Rect.fromLTWH(size.width - t, 0, t, size.height), ink);
+
+    // Bevel: light catch along top/left, shadow along bottom/right.
+    final light = Paint()
+      ..isAntiAlias = false
+      ..color = kPanelLight;
+    canvas.drawRect(Rect.fromLTWH(t, t, size.width - 2 * t, 1), light);
+    canvas.drawRect(Rect.fromLTWH(t, t, 1, size.height - 2 * t), light);
+    final dark = Paint()
+      ..isAntiAlias = false
+      ..color = kPanelDark;
+    canvas.drawRect(
+        Rect.fromLTWH(t, size.height - t - 1, size.width - 2 * t, 1), dark);
+    canvas.drawRect(
+        Rect.fromLTWH(size.width - t - 1, t, 1, size.height - 2 * t), dark);
+
+    // Accent corner rivets with an ink bolt pinning each one.
+    const r = 7.0;
+    final rivet = Paint()
+      ..isAntiAlias = false
+      ..color = accent;
+    final pin = Paint()
+      ..isAntiAlias = false
+      ..color = kInk;
+    for (final o in [
+      Offset.zero,
+      Offset(size.width - r, 0),
+      Offset(0, size.height - r),
+      Offset(size.width - r, size.height - r),
+    ]) {
+      canvas.drawRect(Rect.fromLTWH(o.dx, o.dy, r, r), rivet);
+      canvas.drawRect(
+          Rect.fromLTWH(o.dx + r / 2 - 1.5, o.dy + r / 2 - 1.5, 3, 3), pin);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ScreenBorderPainter old) => old.accent != accent;
+}

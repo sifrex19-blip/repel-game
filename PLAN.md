@@ -154,6 +154,15 @@ private (camera frames never leave the phone — good marketing point), and free
   arm wins when the two disagree wildly), and a REP SENSITIVITY setting
   (STRICT / NORMAL / FORGIVING) so the hold window is tunable on-device
 
+- **M7 — Pushup economy & campaign** *(2026-10-23)*
+  Pushups are the only currency (kills and wave clears pay nothing), the
+  campaign grows to 200 handcrafted+generated levels that never get easier,
+  the tower has a visual upgrade ladder (wood → wood+stone → iron band →
+  iron plate → gold steel, growing taller as it toughens), every wave
+  starts with a pushup (which doubles as the calibration rep — no more
+  auto-countdown), and the screen wears a thin pixel border with corner
+  rivets
+
 ## 8. Open Questions (decide before/during M2)
 
 1. **Name** — ideas: *Repel* (rep + repel), *Pushup Siege*, *Flex Defense*, *Reps vs. Monsters*

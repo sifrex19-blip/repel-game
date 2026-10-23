@@ -41,6 +41,14 @@ class _AppShellState extends State<AppShell> {
             SettingsPanel(
               onClose: () => setState(() => _showSettings = false),
             ),
+
+          // M7: the little border around the whole screen — decorative and
+          // topmost, taps pass straight through it. Accent follows settings.
+          ListenableBuilder(
+            listenable: AppSettings.instance,
+            builder: (context, _) =>
+                PixelScreenBorder(accent: AppSettings.instance.accent),
+          ),
         ],
       ),
     );
@@ -160,7 +168,7 @@ class _HomeMenu extends StatelessWidget {
             alignment: Alignment.bottomCenter,
             child: Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: Text('REPEL v0.1-m6', style: pixelText(7, kDimText)),
+              child: Text('REPEL v0.1-m7', style: pixelText(7, kDimText)),
             ),
           ),
         ),

@@ -7,7 +7,7 @@ import 'pixel_ui.dart';
 import 'repel_game.dart';
 
 /// The between-waves shop (and the defeat screen): buy the 4 upgrades with
-/// coins earned from kills and wave clears, then start the next wave.
+/// PUSHUPS — the game's only currency (M7) — then start the next wave.
 ///
 /// Handcrafted pixel UI via the shared [pixel_ui] kit: hard square corners,
 /// ink outlines, beveled panel faces, Press Start 2P headings, buttons that
@@ -246,7 +246,7 @@ class _Header extends StatelessWidget {
                       ),
                       const SizedBox(height: 5),
                       Text(
-                        'Rest ${snap.restSeconds}s — tap to start early',
+                        'Rest ${snap.restSeconds}s — or do a pushup to start',
                         style: const TextStyle(
                             fontSize: 12, color: Colors.white70),
                       ),
@@ -262,7 +262,7 @@ class _Header extends StatelessWidget {
               ] else ...[
                 const SizedBox(height: 5),
                 Text(
-                  'Upgrades are bought with pushup coins',
+                  'Every pushup pays — upgrades cost pushups',
                   style: const TextStyle(fontSize: 12, color: Colors.white70),
                 ),
               ],

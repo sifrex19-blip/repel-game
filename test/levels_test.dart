@@ -4,14 +4,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:repel_game/m2/levels.dart';
 
 /// The campaign must be valid, distinct and progressively harder — these
-/// assertions are the contract every future level addition has to keep.
+/// assertions are the contract the 200-level generator has to keep (M7):
+/// eight handcrafted on-ramp levels followed by a generated tail that cycles
+/// the same biomes and never gets easier.
 void main() {
   group('campaign shape', () {
-    test('eight levels with sequential ids', () {
-      expect(kLevels.length, 8);
+    test('200 levels with sequential ids', () {
+      expect(kCampaignLength, 200);
+      expect(kLevels.length, kCampaignLength);
       for (var i = 0; i < kLevels.length; i++) {
-        expect(kLevels[i].id, i + 1);
+        expect(kLevels[i].id, i + 1, reason: 'index $i');
       }
+    });
+
+    test('levels 1-8 keep the handcrafted names and tuning', () {
+      expect(kLevels[0].name, 'MOSSGATE');
+      expect(kLevels[1].name, 'CRIMSON DUSK');
+      expect(kLevels[7].name, 'LAST STAND');
+      expect(kLevels[0].waves, 4);
+      expect(kLevels[0].hpScale, 1.0);
+      expect(kLevels[0].bossWave, 0); // the tutorial has no boss
+      expect(kLevels[7].clearBonus, 300);
     });
 
     test('names are pixel-font safe (ASCII uppercase + spaces)', () {
@@ -23,9 +36,15 @@ void main() {
       }
     });
 
+    test('all 200 level names are unique', () {
+      final names = kLevels.map((l) => l.name).toSet();
+      expect(names.length, kLevels.length,
+          reason: 'glued generated names must not collide');
+    });
+
     test('every level defines a completion objective', () {
       for (final l in kLevels) {
-        expect(l.waves, inInclusiveRange(4, 10));
+        expect(l.waves, inInclusiveRange(4, 12));
       }
     });
   });
@@ -46,8 +65,10 @@ void main() {
       expect(kLevels[1].mix.keys, contains(EnemyVariant.runner));
       expect(kLevels[2].mix.keys, contains(EnemyVariant.runner));
       expect(kLevels[3].mix.keys, contains(EnemyVariant.brute));
-      expect(kLevels.last.mix.keys,
-          unorderedEquals(EnemyVariant.values.where((v) => v != EnemyVariant.boss)));
+      expect(
+          kLevels.last.mix.keys,
+          unorderedEquals(
+              EnemyVariant.values.where((v) => v != EnemyVariant.boss)));
     });
 
     test('pickVariant respects weight boundaries', () {
@@ -74,24 +95,56 @@ void main() {
     test('scales rise and spawn pressure tightens monotonically', () {
       for (var i = 1; i < kLevels.length; i++) {
         final prev = kLevels[i - 1], cur = kLevels[i];
-        expect(cur.hpScale, greaterThanOrEqualTo(prev.hpScale));
-        expect(cur.speedScale, greaterThanOrEqualTo(prev.speedScale));
-        expect(cur.damageScale, greaterThanOrEqualTo(prev.damageScale));
-        expect(cur.spawnMs, lessThanOrEqualTo(prev.spawnMs));
-        expect(cur.clearCoins, greaterThan(prev.clearCoins));
+        expect(cur.hpScale, greaterThanOrEqualTo(prev.hpScale),
+            reason: 'hp ${prev.id}→${cur.id}');
+        expect(cur.speedScale, greaterThanOrEqualTo(prev.speedScale),
+            reason: 'speed ${prev.id}→${cur.id}');
+        expect(cur.damageScale, greaterThanOrEqualTo(prev.damageScale),
+            reason: 'dmg ${prev.id}→${cur.id}');
+        expect(cur.spawnMs, lessThanOrEqualTo(prev.spawnMs),
+            reason: 'spawn ${prev.id}→${cur.id}');
+        expect(cur.clearBonus, greaterThan(prev.clearBonus),
+            reason: 'bonus ${prev.id}→${cur.id}');
       }
       expect(kLevels.first.hpScale, 1.0);
-      expect(kLevels.last.hpScale, lessThanOrEqualTo(3.0),
-          reason: 'difficulty must stay fair, not inflate');
+      expect(kLevels.last.hpScale, lessThanOrEqualTo(12.0),
+          reason: 'the tail must climb but stay fair');
+      expect(kLevels.last.spawnMs, 900, reason: 'spawn gap floor');
+    });
+
+    test('waves grow from 4 to the cap of 12', () {
+      expect(kLevels.first.waves, 4);
+      expect(kLevels.last.waves, 12);
+      for (var i = 1; i < kLevels.length; i++) {
+        expect(kLevels[i].waves, greaterThanOrEqualTo(kLevels[i - 1].waves),
+            reason: 'waves ${kLevels[i - 1].id}→${kLevels[i].id}');
+      }
     });
   });
 
   group('palettes', () {
-    test('every level has a distinct atmosphere and enemy hue', () {
+    test('the eight biomes cycle through all 200 levels', () {
       final washes = kLevels.map((l) => l.palette.wash.toARGB32()).toSet();
-      final grunts = kLevels.map((l) => l.palette.hueOf(EnemyVariant.grunt).toARGB32()).toSet();
-      expect(washes.length, kLevels.length);
-      expect(grunts.length, kLevels.length);
+      final grunts = kLevels
+          .map((l) => l.palette.hueOf(EnemyVariant.grunt).toARGB32())
+          .toSet();
+      expect(washes.length, kBiomes.length);
+      expect(grunts.length, kBiomes.length);
+      // Every run of eight consecutive levels wears all eight biomes.
+      for (var start = 0; start < 8; start++) {
+        final run = kLevels
+            .skip(start)
+            .take(8)
+            .map((l) => l.palette.wash.toARGB32())
+            .toSet();
+        expect(run.length, 8, reason: 'biome cycle broken at offset $start');
+      }
+    });
+
+    test('levels 1-8 each wear a distinct atmosphere', () {
+      final firstEight =
+          kLevels.take(8).map((l) => l.palette.wash.toARGB32()).toSet();
+      expect(firstEight.length, 8);
     });
 
     test('palettes expose derived castle/ground tones', () {
@@ -120,8 +173,10 @@ void main() {
     test('resolves valid ids and clamps corrupt ones', () {
       expect(levelById(1).id, 1);
       expect(levelById(8).id, 8);
+      expect(levelById(99).id, 99);
+      expect(levelById(200).id, 200);
       expect(levelById(0).id, 1); // clamps low
-      expect(levelById(99).id, 8); // clamps high
+      expect(levelById(9999).id, kLevels.length); // clamps high
       expect(levelById(-5).id, 1);
     });
   });
