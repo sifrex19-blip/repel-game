@@ -270,4 +270,284 @@ void main() {
       expect(f.filter(PushupVerdict.handsUp, at(295)), PushupVerdict.ok);
     });
   });
+
+  group('PushupGate — degenerate torso floor (M6.1)', () {
+    test('hip mis-detected onto the shoulder mid → noHips, not ok', () {
+      // Without a lower bound, a zero-length torso fakes perfect
+      // foreshortening and a standing body passes as a plank.
+      const sample = GateSample(
+        shoulderL: GatePoint(0.42, 0.62, 0.9),
+        shoulderR: GatePoint(0.58, 0.62, 0.9),
+        wristL: GatePoint(0.40, 0.74, 0.8),
+        wristR: GatePoint(0.60, 0.74, 0.8),
+        hipL: GatePoint(0.50, 0.62, 0.9), // collapsed onto the shoulder mid
+      );
+      expect(gate.evaluate(sample), PushupVerdict.noHips);
+    });
+
+    test('both hips collapsed just above the shoulders → noHips', () {
+      const sample = GateSample(
+        shoulderL: GatePoint(0.42, 0.62, 0.9),
+        shoulderR: GatePoint(0.58, 0.62, 0.9),
+        wristL: GatePoint(0.40, 0.74, 0.8),
+        wristR: GatePoint(0.60, 0.74, 0.8),
+        hipL: GatePoint(0.49, 0.615, 0.8),
+        hipR: GatePoint(0.51, 0.615, 0.8), // torso ratio ≈ 0.03 < 0.08
+      );
+      expect(gate.evaluate(sample), PushupVerdict.noHips);
+    });
+
+    test('a strongly foreshortened but real torso still passes', () {
+      // Just above the 0.08 floor: extreme camera angles must not lock
+      // out a genuine pushup.
+      const sample = GateSample(
+        shoulderL: GatePoint(0.42, 0.62, 0.9),
+        shoulderR: GatePoint(0.58, 0.62, 0.9),
+        wristL: GatePoint(0.40, 0.74, 0.8),
+        wristR: GatePoint(0.60, 0.74, 0.8),
+        hipL: GatePoint(0.50, 0.635, 0.7), // torso ratio ≈ 0.094 > 0.08
+      );
+      expect(gate.evaluate(sample), PushupVerdict.ok);
+    });
+  });
+
+  group('VerdictHoldFilter — stream restarts (M6.1)', () {
+    final t0 = DateTime(2026, 1, 1, 12);
+    DateTime at(int ms) => t0.add(Duration(milliseconds: ms));
+
+    test('a long gap cannot let ONE glitchy frame finish an old streak',
+        () {
+      final f = VerdictHoldFilter();
+      expect(f.filter(PushupVerdict.noHips, at(0)), PushupVerdict.ok);
+      expect(f.filter(PushupVerdict.noHips, at(200)), PushupVerdict.ok);
+      // The app was paused for 10 minutes; the stream resumes on a single
+      // glitchy frame. Without the gap guard, the stale streak timestamp
+      // would make that ONE frame interrupt a real rep instantly.
+      final resume = 10 * 60 * 1000;
+      expect(f.filter(PushupVerdict.noHips, at(resume)), PushupVerdict.ok);
+      // Persistence is judged from the resumed stream onward.
+      expect(f.filter(PushupVerdict.noHips, at(resume + 200)),
+          PushupVerdict.ok);
+      expect(f.filter(PushupVerdict.noHips, at(resume + 300)),
+          PushupVerdict.noHips);
+    });
+
+    test('a gap at the frame-gap boundary still counts as continuous', () {
+      // 1500ms exactly is a slow stream, not a restart…
+      final f = VerdictHoldFilter();
+      f.filter(PushupVerdict.handsUp, at(0));
+      expect(
+          f.filter(PushupVerdict.handsUp, at(1500)), PushupVerdict.handsUp);
+      // …one millisecond more is a restart.
+      final g = VerdictHoldFilter();
+      g.filter(PushupVerdict.handsUp, at(0));
+      expect(g.filter(PushupVerdict.handsUp, at(1501)), PushupVerdict.ok);
+    });
+
+    test('sub-second stream gaps still accumulate (no false grace)', () {
+      // A laggy camera dropping to ~1fps must not buy the cheat extra
+      // grace — only a true stream break resets the streak.
+      final f = VerdictHoldFilter();
+      f.filter(PushupVerdict.upright, at(0));
+      expect(f.filter(PushupVerdict.upright, at(1000)), PushupVerdict.upright);
+    });
+
+    test('reset also forgets the call-gap history', () {
+      final f = VerdictHoldFilter();
+      f.filter(PushupVerdict.noBody, at(0));
+      f.reset();
+      expect(f.filter(PushupVerdict.noBody, at(0)), PushupVerdict.ok);
+    });
+  });
+
+  group('CalibrationGate — the "2 full pushups" promise (M6.1)', () {
+    final t0 = DateTime(2026, 1, 1, 12);
+    DateTime at(int ms) => t0.add(Duration(milliseconds: ms));
+
+    /// Steady samples at the top of a rep for [ms] milliseconds.
+    void feedTop(CalibrationGate g, int startMs, double top, int ms) {
+      for (var t = 0; t < ms; t += 33) {
+        g.update(top, at(startMs + t));
+      }
+    }
+
+    /// One triangle-wave pushup: [top]→[bottom]→[top] as ~30fps samples.
+    /// Returns true if any sample opened the gate.
+    bool feedRep(CalibrationGate g, int startMs,
+        {required double top, required double bottom, int frames = 10}) {
+      var opened = false;
+      for (var i = 1; i <= frames; i++) {
+        if (g.update(top - (top - bottom) * i / frames,
+            at(startMs + i * 33))) {
+          opened = true;
+        }
+      }
+      for (var i = 1; i <= frames; i++) {
+        if (g.update(bottom + (top - bottom) * i / frames,
+            at(startMs + (frames + i) * 33))) {
+          opened = true;
+        }
+      }
+      return opened;
+    }
+
+    test('two proper full pushups open the gate — one does not', () {
+      final g = CalibrationGate();
+      feedTop(g, 0, 160, 200);
+      expect(g.isOpen, isFalse);
+      expect(g.observedCycleSpan, isNull);
+
+      expect(feedRep(g, 300, top: 160, bottom: 125), isFalse,
+          reason: 'the HUD promises TWO pushups, not one');
+      expect(g.provenReps, 1);
+      expect(g.isOpen, isFalse);
+
+      expect(feedRep(g, 1200, top: 160, bottom: 125), isTrue);
+      expect(g.provenReps, 2);
+      expect(g.isOpen, isTrue);
+    });
+
+    test('shallow half-movement never opens the gate', () {
+      final g = CalibrationGate();
+      feedTop(g, 0, 160, 200);
+      // Ten lazy 12° pumps — the classic "barely bend the elbows" cheat.
+      for (var r = 0; r < 10; r++) {
+        feedRep(g, 500 + r * 900, top: 160, bottom: 148);
+      }
+      expect(g.provenReps, 0);
+      expect(g.isOpen, isFalse);
+    });
+
+    test('a single noisy angle spike never opens the gate', () {
+      final g = CalibrationGate();
+      feedTop(g, 0, 160, 1000); // 1s steady at the top
+      g.update(110, at(1000)); // one mis-tracked frame: a 50° spike down
+      feedTop(g, 1033, 160, 1000);
+      expect(g.provenReps, 0);
+      expect(g.isOpen, isFalse,
+          reason: 'a 33ms spike is detector noise, not a pushup');
+
+      // A 3-frame spike train (≈100ms) is still not a pushup.
+      final h = CalibrationGate();
+      feedTop(h, 0, 160, 1000);
+      h.update(140, at(1000));
+      h.update(115, at(1033));
+      h.update(140, at(1066));
+      feedTop(h, 1099, 160, 1000);
+      expect(h.provenReps, 0);
+      expect(h.isOpen, isFalse);
+    });
+
+    test('jitter band at the top never opens the gate', () {
+      final g = CalibrationGate();
+      for (var i = 0; i < 300; i++) {
+        g.update(160 + ((i % 5) - 2), at(i * 33)); // 10s of ±2° jitter
+      }
+      expect(g.provenReps, 0);
+      expect(g.isOpen, isFalse);
+    });
+
+    test('exact span boundary: 20° counts, 19.9° never does', () {
+      // decayPerSec 0 isolates the boundary semantics from drift.
+      final g = CalibrationGate(decayPerSec: 0);
+      feedTop(g, 0, 160, 200);
+      feedRep(g, 300, top: 160, bottom: 140); // exactly 20° of motion
+      expect(g.provenReps, 1);
+
+      final h = CalibrationGate(decayPerSec: 0);
+      feedTop(h, 0, 160, 200);
+      feedRep(h, 300, top: 160, bottom: 140.1); // 19.9° — one notch short
+      expect(h.provenReps, 0);
+      expect(h.isOpen, isFalse);
+    });
+
+    test('exact duration boundary: 250ms counts, 249ms never does', () {
+      final g = CalibrationGate(decayPerSec: 0);
+      g.update(160, at(0));
+      g.update(150, at(100)); // 10° drop → the cycle starts here
+      g.update(130, at(150)); // bottom
+      g.update(156, at(350)); // back in the top band exactly 250ms later
+      expect(g.provenReps, 1);
+
+      final h = CalibrationGate(decayPerSec: 0);
+      h.update(160, at(0));
+      h.update(150, at(100));
+      h.update(130, at(150));
+      h.update(156, at(349)); // one millisecond short of the bar
+      expect(h.provenReps, 0);
+      expect(h.isOpen, isFalse);
+    });
+
+    test('the gate does not flap: open latches until reset', () {
+      final g = CalibrationGate();
+      feedTop(g, 0, 160, 200);
+      feedRep(g, 300, top: 160, bottom: 125);
+      feedRep(g, 1200, top: 160, bottom: 125);
+      expect(g.isOpen, isTrue);
+
+      // Shallow pumps, a deep spike and standing jitter afterwards must
+      // never close a proven gate (the old span-decay rule flapped back
+      // to "CALIBRATING" after ~40s at the top).
+      feedRep(g, 2500, top: 160, bottom: 150);
+      g.update(90, at(3500));
+      for (var i = 0; i < 60; i++) {
+        g.update(160 + ((i % 7) - 3), at(3600 + i * 33));
+      }
+      expect(g.isOpen, isTrue,
+          reason: 'proven evidence never un-proves itself');
+
+      // Only an explicit reset closes it — and then both pushups are
+      // required again.
+      g.reset();
+      expect(g.isOpen, isFalse);
+      expect(g.provenReps, 0);
+      feedRep(g, 6000, top: 160, bottom: 125);
+      expect(g.isOpen, isFalse, reason: 'one rep is not enough again');
+      feedRep(g, 7000, top: 160, bottom: 125);
+      expect(g.isOpen, isTrue);
+    });
+
+    test('interrupt drops the in-flight cycle — halves cannot stitch', () {
+      final g = CalibrationGate();
+      feedTop(g, 0, 160, 200);
+      g.update(150, at(300)); // start descending…
+      g.update(120, at(500)); // …deep bottom — but the pose gate fails here
+      g.interrupt(); // …so this half-segment is discarded
+      g.update(160, at(700)); // back at the top
+      expect(g.provenReps, 0,
+          reason: 'the descent happened under a failing pose verdict');
+
+      expect(feedRep(g, 1200, top: 160, bottom: 125), isFalse);
+      expect(g.provenReps, 1,
+          reason: 'a full clean cycle counts again after the interrupt');
+      expect(g.isOpen, isFalse);
+      feedRep(g, 2200, top: 160, bottom: 125);
+      expect(g.isOpen, isTrue);
+    });
+
+    test('a camera bump (baseline shift) recovers — no permanent lockout',
+        () {
+      final g = CalibrationGate();
+      feedTop(g, 0, 160, 1000);
+      // The phone is nudged mid-set: the same body now reads 145°.
+      feedTop(g, 1000, 145, 6600); // ~6.6s at the new baseline
+      expect(g.provenReps, 0,
+          reason: 'a baseline shift alone is not rep evidence');
+      expect(g.isOpen, isFalse);
+
+      // Real pushups from the new baseline count immediately.
+      feedRep(g, 8000, top: 145, bottom: 110);
+      expect(g.provenReps, 1);
+      feedRep(g, 9000, top: 145, bottom: 110);
+      expect(g.isOpen, isTrue);
+    });
+
+    test('repsRequired is configurable (one pushup when set to 1)', () {
+      final g = CalibrationGate(repsRequired: 1);
+      feedTop(g, 0, 160, 200);
+      expect(feedRep(g, 300, top: 160, bottom: 125), isTrue);
+      expect(g.provenReps, 1);
+      expect(g.isOpen, isTrue);
+    });
+  });
 }

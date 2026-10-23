@@ -45,6 +45,13 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   final _counter = PushupCounter();
   final _gate = const PushupGate();
 
+  /// Calibration proof: one real full pushup (≥20° range, ≥250ms, all
+  /// under ok pose verdicts) must be seen before the HUD may claim
+  /// "calibrated". Fed in parallel with the counter on the same approved
+  /// samples; repsRequired:1 makes the proof land on the SAME rep the
+  /// counter counts, so the first honest pushup still counts (M7 contract).
+  final _calib = CalibrationGate(repsRequired: 1);
+
   /// Temporal consensus on gate verdicts: a bad pose must persist before
   /// counting pauses, so single-frame detector flicker can't drop reps.
   final _verdictHold = VerdictHoldFilter();
@@ -196,8 +203,17 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
           hold: AppSettings.instance.gateHold,
         );
         if (effective != PushupVerdict.ok) {
-          _counter.interrupt(); // faked pose can't complete a half-cycle
+          // Faked/garbled pose can't complete a half-cycle — for the
+          // counter AND for the calibration proof (no stitching across
+          // bad frames): both drop their in-flight cycle together.
+          _counter.interrupt();
+          _calib.interrupt();
         } else if (angle != null) {
+          // Parallel feed: both see exactly the same approved samples.
+          // The gate proves a full ≥20°/≥250ms cycle (spike-proof), the
+          // counter does its phase machine — for one honest pushup both
+          // flip on the same sample.
+          _calib.update(angle, _lastPoseAt!);
           final reps = _counter.update(angle, _lastPoseAt!);
           if (reps != null) {
             _game.onRep(); // a counted pushup = one shot at the monsters
@@ -219,7 +235,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
           DateTime.now(),
           hold: AppSettings.instance.gateHold,
         );
-        if (effective != PushupVerdict.ok) _counter.interrupt();
+        if (effective != PushupVerdict.ok) {
+          _counter.interrupt();
+          _calib.interrupt();
+        }
       }
     });
   }
@@ -361,7 +380,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   /// a pushup, say why (and how to fix it) before any angle coaching.
   String _formStatus() {
     if (_verdict != PushupVerdict.ok) return verdictMessage(_verdict);
-    if (!_counter.isCalibrated) return 'CALIBRATING…';
+    if (!(_calib.isOpen && _counter.isCalibrated)) return 'CALIBRATING…';
     return switch (_counter.phase) {
       PushupPhase.down => 'PUSH UP!',
       PushupPhase.up => 'GO DOWN',
@@ -373,7 +392,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
     if (_verdict != PushupVerdict.ok) {
       return _verdict == PushupVerdict.noBody ? kDimText : kOrange;
     }
-    if (!_counter.isCalibrated) return kOrange;
+    if (!(_calib.isOpen && _counter.isCalibrated)) return kOrange;
     return switch (_counter.phase) {
       PushupPhase.down => kOrange,
       PushupPhase.up => kGreen,
@@ -774,17 +793,17 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                       Row(
                         children: [
                           Text(
-                            _counter.isCalibrated
+                            _calib.isOpen && _counter.isCalibrated
                                 ? 'DOWN ${_counter.downAngle!.toStringAsFixed(0)}°'
                                 : 'ONE FULL PUSHUP TO CALIBRATE',
                             style: pixelText(
                                 7,
-                                _counter.isCalibrated
+                                _calib.isOpen && _counter.isCalibrated
                                     ? kOrange
                                     : kDimText),
                           ),
                           const Spacer(),
-                          if (_counter.isCalibrated)
+                          if (_calib.isOpen && _counter.isCalibrated)
                             Text(
                               'UP ${_counter.upAngle!.toStringAsFixed(0)}°',
                               style: pixelText(7, kGreen),
@@ -938,6 +957,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                           }
                           setState(() {
                             _counter.reset();
+                            _calib.reset(); // proof restarts with the counter
                             _showMore = false;
                           });
                         },
