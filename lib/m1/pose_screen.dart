@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 import '../app_settings.dart';
+import '../m2/economy.dart';
 import '../m2/game_camera.dart';
 import '../m2/pixel_art.dart';
 import '../m2/pixel_ui.dart';
@@ -50,6 +51,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   DateTime? _lastPoseAt;
   double? _elbowAngle;
   Size? _imageSize; // raw (unrotated) frame size of the latest image
+  /// Per-arm landmark visibility for the HUD: 0 = not seen, 1 = shaky,
+  /// 2 = confident (see [_elbowAngleOf]).
+  int _leftArm = 0;
+  int _rightArm = 0;
   double _inferenceFps = 0;
   int _fpsCounter = 0;
   DateTime _fpsWindow = DateTime.now();
@@ -159,13 +164,23 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
             HapticFeedback.mediumImpact(); // feel every rep without looking
           }
         }
+      } else {
+        _elbowAngle = null;
+        _leftArm = 0;
+        _rightArm = 0;
       }
     });
   }
 
   /// Average elbow angle across whichever arms are confidently visible.
+  /// Also records per-arm visibility (0 = not seen, 1 = seen but shaky,
+  /// 2 = confident) for the HUD's arm indicators — wrists near the frame
+  /// edge are the usual reason no angle (and therefore no rep) exists.
   double? _elbowAngleOf(Pose pose) {
     final angles = <double>[];
+    _leftArm = 0;
+    _rightArm = 0;
+    var armIndex = 0;
     for (final (s, e, w) in [
       (
         PoseLandmarkType.leftShoulder,
@@ -181,12 +196,25 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
       final shoulder = pose.landmarks[s];
       final elbow = pose.landmarks[e];
       final wrist = pose.landmarks[w];
-      if (shoulder == null || elbow == null || wrist == null) continue;
-      if (shoulder.likelihood < 0.5 ||
-          elbow.likelihood < 0.5 ||
-          wrist.likelihood < 0.5) {
+      if (shoulder == null || elbow == null || wrist == null) {
+        armIndex++;
         continue;
       }
+      final minLikelihood = [
+        shoulder.likelihood,
+        elbow.likelihood,
+        wrist.likelihood,
+      ].reduce((a, b) => a < b ? a : b);
+      // 0.4 (was 0.5): wrists are often the weakest landmark during a
+      // plank and a strict cut here dropped the angle entirely.
+      final state = minLikelihood >= 0.5 ? 2 : minLikelihood >= 0.4 ? 1 : 0;
+      if (armIndex == 0) {
+        _leftArm = state;
+      } else {
+        _rightArm = state;
+      }
+      armIndex++;
+      if (state == 0) continue;
       angles.add(computeAngle(
         ax: shoulder.x,
         ay: shoulder.y,
@@ -198,6 +226,127 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
     }
     if (angles.isEmpty) return null;
     return angles.reduce((a, b) => a + b) / angles.length;
+  }
+
+  /// One-line status for the hero HUD panel.
+  String _phaseLabel(GameSnapshot s) => switch (s.phase) {
+        GamePhase.menu => 'LEVEL SELECT',
+        GamePhase.intro => 'WAVE ${s.wave} — READY',
+        GamePhase.fighting => 'FIGHT!',
+        GamePhase.waveCleared => 'WAVE CLEAR — SHOP',
+        GamePhase.victory => 'VICTORY!',
+        GamePhase.defeat => 'DEFEAT',
+      };
+
+  Color _phaseColor(GameSnapshot s) => switch (s.phase) {
+        GamePhase.fighting => kGreen,
+        GamePhase.victory || GamePhase.waveCleared => kGold,
+        GamePhase.defeat => kOrange,
+        _ => kWhite,
+      };
+
+  /// L/R arm visibility dot for the form meter (0 missing, 1 shaky, 2 good).
+  Widget _armDot(String label, int state) {
+    final color = state == 2
+        ? kGreen
+        : state == 1
+            ? kOrange
+            : const Color(0xFF6B6680);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 12,
+          child: Text(label, style: pixelText(7, kDimText)),
+        ),
+        Container(
+          width: 9,
+          height: 9,
+          decoration: BoxDecoration(
+            color: color,
+            border: Border.all(color: kInk, width: 1),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Form-meter status: what to do right now, in the player's terms.
+  String _formStatus() {
+    if (!_counter.isCalibrated) return 'CALIBRATING…';
+    return switch (_counter.phase) {
+      PushupPhase.down => 'PUSH UP!',
+      PushupPhase.up => 'GO DOWN',
+      PushupPhase.unknown => 'READY',
+    };
+  }
+
+  Color _formStatusColor() {
+    if (!_counter.isCalibrated) return kOrange;
+    return switch (_counter.phase) {
+      PushupPhase.down => kOrange,
+      PushupPhase.up => kGreen,
+      PushupPhase.unknown => kWhite,
+    };
+  }
+
+  /// Angle bar: 60° (bent) → 180° (straight) with the learned down/up
+  /// threshold ticks — the direct answer to "why didn't that count?".
+  Widget _angleBar() {
+    double t(double? deg) =>
+        deg == null ? 0.0 : ((deg - 60) / 120).clamp(0.0, 1.0);
+    final angle = _counter.smoothedAngle ?? _elbowAngle;
+    final down = _counter.downAngle;
+    final up = _counter.upAngle;
+    final fill = angle == null
+        ? const Color(0xFF6B6680)
+        : down != null && angle <= down
+            ? kOrange
+            : up != null && angle >= up
+                ? kGreen
+                : const Color(0xFF9D97B8);
+
+    return Container(
+      height: 14,
+      decoration: BoxDecoration(
+        color: kPanelDark,
+        border: Border.all(color: kInk, width: 1),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          double tickX(double? deg) => (t(deg) * w - 1).clamp(0.0, w - 3);
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: t(angle) * w,
+                child: ColoredBox(color: fill),
+              ),
+              if (down != null)
+                Positioned(
+                  left: tickX(down),
+                  top: 0,
+                  bottom: 0,
+                  width: 3,
+                  child: const ColoredBox(color: kOrange),
+                ),
+              if (up != null)
+                Positioned(
+                  left: tickX(up),
+                  top: 0,
+                  bottom: 0,
+                  width: 3,
+                  child: const ColoredBox(color: kGreen),
+                ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   /// Compensates the fixed sensor orientation for how the device is held, so
@@ -267,6 +416,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
     final poseAge = _lastPoseAt == null
         ? null
         : DateTime.now().difference(_lastPoseAt!);
+    // Hint states: nobody in frame vs hands/arms outside the frame (the
+    // usual reason the elbow angle — and therefore a rep — never exists).
+    final hintNoPose = poseAge == null || poseAge.inMilliseconds > 1500;
+    final hintNoArms = !hintNoPose && _elbowAngle == null;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -309,107 +462,195 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
           // M2: combat game floating over the camera feed.
           GameWidget<RepelGame>(game: _game),
 
-          // Rep counter (top center) — the future attack strength.
+          // Hero HUD panel (top center) — level, rep count with pop, the
+          // combo meter, and the current fight status. One framed pixel
+          // block instead of floating labels.
           SafeArea(
             child: Align(
               alignment: Alignment.topCenter,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    transitionBuilder: (child, animation) {
-                      final curved = CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOut,
-                      );
-                      // Old number expands out, new one pops in — pixel feel.
-                      return FadeTransition(
-                        opacity: curved,
-                        child: ScaleTransition(
-                          scale: Tween<double>(begin: 1.35, end: 1.0)
-                              .animate(curved),
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: Text(
-                      '${_counter.reps}',
-                      key: ValueKey(_counter.reps),
-                      style: const TextStyle(
-                        fontFamily: kPixelFont,
-                        fontSize: 56,
-                        height: 1,
-                        color: kWhite,
-                        shadows: [
-                          Shadow(color: kInk, offset: Offset(3, 3), blurRadius: 0),
+              child: ValueListenableBuilder<GameSnapshot>(
+                valueListenable: _game.snapshot,
+                builder: (context, snap, _) {
+                  final combo = snap.combo;
+                  final mult = comboMultiplier(combo);
+                  final barColor =
+                      mult >= 1.8 ? kOrange : mult >= 1.5 ? kGold : kGreen;
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: PixelPanel(
+                      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '#${snap.levelId} ${snap.levelName.toUpperCase()}',
+                            style: pixelText(7, kDimText),
+                          ),
+                          const SizedBox(height: 5),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            transitionBuilder: (child, animation) {
+                              final curved = CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOut,
+                              );
+                              // Old number expands out, new one pops in —
+                              // pixel feel.
+                              return FadeTransition(
+                                opacity: curved,
+                                child: ScaleTransition(
+                                  scale:
+                                      Tween<double>(begin: 1.35, end: 1.0)
+                                          .animate(curved),
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: Text(
+                              '${_counter.reps}',
+                              key: ValueKey(_counter.reps),
+                              style: TextStyle(
+                                fontFamily: kPixelFont,
+                                fontSize: _counter.reps < 100 ? 44 : 30,
+                                height: 1,
+                                color: kWhite,
+                                shadows: const [
+                                  Shadow(
+                                      color: kInk,
+                                      offset: Offset(3, 3),
+                                      blurRadius: 0),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          const Text(
+                            'PUSHUPS',
+                            style: TextStyle(
+                              fontFamily: kPixelFont,
+                              fontSize: 9,
+                              color: kOrange,
+                              shadows: [
+                                Shadow(
+                                    color: kInk,
+                                    offset: Offset(1, 1),
+                                    blurRadius: 0),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          // Combo meter — 8 segments, colored by multiplier.
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              for (var i = 0; i < 8; i++)
+                                Container(
+                                  width: 7,
+                                  height: 11,
+                                  margin: const EdgeInsets.symmetric(
+                                      horizontal: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: i < combo ? barColor : kPanelDark,
+                                    border:
+                                        Border.all(color: kInk, width: 1),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          // Label pops on every new combo step (the feel the
+                          // old canvas combo had).
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 160),
+                            transitionBuilder: (child, animation) =>
+                                FadeTransition(
+                              opacity: animation,
+                              child: ScaleTransition(
+                                scale: Tween<double>(begin: 1.4, end: 1.0)
+                                    .animate(CurvedAnimation(
+                                        parent: animation,
+                                        curve: Curves.easeOut)),
+                                child: child,
+                              ),
+                            ),
+                            child: Text(
+                              combo >= 2
+                                  ? 'COMBO ${mult.toStringAsFixed(1)}X'
+                                  : 'COMBO --',
+                              key: ValueKey(combo),
+                              style:
+                                  pixelText(7, combo >= 2 ? barColor : kDimText),
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            _phaseLabel(snap),
+                            style: pixelText(7, _phaseColor(snap)),
+                          ),
                         ],
                       ),
                     ),
-                  ),
-                  const Text(
-                    'PUSHUPS',
-                    style: TextStyle(
-                      fontFamily: kPixelFont,
-                      fontSize: 10,
-                      color: kOrange,
-                      shadows: [
-                        Shadow(color: kInk, offset: Offset(1, 1), blurRadius: 0),
-                      ],
-                    ),
-                  ),
-                ],
+                  );
+                },
               ),
             ),
           ),
 
-          // Debug telemetry chip (top left) — behind Settings → Debug overlay.
-          if (debugOn)
-            SafeArea(
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: Container(
-                  margin: const EdgeInsets.all(12),
+          // Pushup form meter — top of the camera band, always visible: arm
+          // visibility, live elbow angle, and where the down/up thresholds
+          // sit, so you can SEE why a rep did or didn't count.
+          Positioned(
+            left: 0,
+            right: 0,
+            top: camZone.top + 8,
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: PixelPanel(
+                  face: const Color(0xCC0D0B14),
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xCC0D0B14),
-                    border: Border.all(color: kInk, width: 2),
-                  ),
-                  child: Row(
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        color: poseAge != null &&
-                                poseAge.inMilliseconds < 1500
-                            ? kGreen
-                            : const Color(0xFF6B6680),
+                      Row(
+                        children: [
+                          _armDot('L', _leftArm),
+                          const SizedBox(width: 8),
+                          _armDot('R', _rightArm),
+                          const SizedBox(width: 12),
+                          Text(
+                            '${_elbowAngle?.toStringAsFixed(0) ?? '--'}°',
+                            style: pixelText(10, kWhite),
+                          ),
+                          const Spacer(),
+                          Text(
+                            _formStatus(),
+                            style: pixelText(8, _formStatusColor()),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
+                      const SizedBox(height: 6),
+                      _angleBar(),
+                      const SizedBox(height: 5),
+                      Row(
                         children: [
                           Text(
-                            'M1 ${_inferenceFps.toStringAsFixed(0)} FPS '
-                            '${_service.lastInference.inMilliseconds} MS',
-                            style: const TextStyle(
-                              fontFamily: kPixelFont,
-                              fontSize: 10,
-                              color: kWhite,
-                            ),
+                            _counter.isCalibrated
+                                ? 'DOWN ${_counter.downAngle!.toStringAsFixed(0)}°'
+                                : 'DO 2 FULL PUSHUPS TO CALIBRATE',
+                            style: pixelText(
+                                7,
+                                _counter.isCalibrated
+                                    ? kOrange
+                                    : kDimText),
                           ),
-                          Text(
-                            'UI ${_renderFps.toStringAsFixed(0)} FPS '
-                            '· PING --',
-                            style: const TextStyle(
-                              fontFamily: kPixelFont,
-                              fontSize: 10,
-                              color: kWhite,
+                          const Spacer(),
+                          if (_counter.isCalibrated)
+                            Text(
+                              'UP ${_counter.upAngle!.toStringAsFixed(0)}°',
+                              style: pixelText(7, kGreen),
                             ),
-                          ),
                         ],
                       ),
                     ],
@@ -417,56 +658,94 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          ),
 
-          // Angle / phase debug strip (bottom left) — on-device threshold
-          // tuning, gated behind Settings → Debug overlay.
+          // Debug cluster (bottom left of the camera band) — one pixel panel
+          // with all telemetry, behind Settings → Debug overlay.
           if (debugOn)
             SafeArea(
               child: Align(
                 alignment: Alignment.bottomLeft,
-              child: Container(
-                margin: const EdgeInsets.all(12),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xCC0D0B14),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: const Color(0xFF3A3450)),
-                ),
-                child: Text(
-                  'angle ${_elbowAngle?.toStringAsFixed(0) ?? "--"}°'
-                  ' · ${_counter.phase.name.toUpperCase()}'
-                  ' · ${_counter.isCalibrated ? "CAL ${_counter.downAngle!.toStringAsFixed(0)}/${_counter.upAngle!.toStringAsFixed(0)}°" : "CALIBRATING…"}'
-                  '\nrot $rotation° · sensor ${widget.camera.sensorOrientation}°'
-                  ' · frame ${_imageSize?.width.toInt() ?? "?"}'
-                  '×${_imageSize?.height.toInt() ?? "?"}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.white70,
-                    height: 1.4,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: PixelPanel(
+                    face: const Color(0xCC0D0B14),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 7),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              color: poseAge != null &&
+                                      poseAge.inMilliseconds < 1500
+                                  ? kGreen
+                                  : const Color(0xFF6B6680),
+                            ),
+                            const SizedBox(width: 7),
+                            Text(
+                              'M1 ${_inferenceFps.toStringAsFixed(0)} FPS '
+                              '${_service.lastInference.inMilliseconds} MS',
+                              style: pixelText(7, kWhite),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'UI ${_renderFps.toStringAsFixed(0)} FPS · PING --',
+                          style: pixelText(7, kWhite),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${_counter.phase.name.toUpperCase()} · CAL '
+                          '${_counter.isCalibrated ? "${_counter.downAngle!.toStringAsFixed(0)}/${_counter.upAngle!.toStringAsFixed(0)}°" : "--"}',
+                          style: pixelText(7, kDimText),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'R$rotation° S${widget.camera.sensorOrientation}°'
+                          ' F${_imageSize?.width.toInt() ?? "?"}'
+                          '×${_imageSize?.height.toInt() ?? "?"}',
+                          style: pixelText(7, kDimText),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
 
-          // "Get into position" hint (only when nobody is visible) — shown
-          // over the camera band, where the player is actually looking.
-          if (poseAge == null || poseAge.inMilliseconds > 1500)
+          // Position hint (over the camera band, where the player looks) —
+          // pixel styled; adapts: nobody in frame vs hands out of frame.
+          if (hintNoPose || hintNoArms)
             Positioned.fromRect(
               rect: camZone,
               child: Center(
-                child: Container(
+                child: PixelPanel(
+                  face: const Color(0xCC0D0B14),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xCC0D0B14),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: kInk, width: 2),
-                  ),
-                  child: const Text(
-                    'Step back — let the camera see your whole body',
-                    style: TextStyle(fontSize: 16, color: Colors.white70),
+                      horizontal: 22, vertical: 14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        hintNoPose ? 'STEP BACK' : 'HANDS OUT OF FRAME',
+                        style: pixelText(11, kOrange, shadow: 2),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        hintNoPose
+                            ? 'LET THE CAMERA SEE YOUR WHOLE BODY'
+                            : 'MOVE BACK OR LOWER THE PHONE',
+                        textAlign: TextAlign.center,
+                        style: pixelText(7, kWhite),
+                      ),
+                    ],
                   ),
                 ),
               ),

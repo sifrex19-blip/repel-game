@@ -53,6 +53,24 @@ void main() {
       expect(c.upAngle, closeTo(121, 0.5));
     });
 
+    test('arms even with a foreshortened 25° span (M5: easier calibration)', () {
+      // Floor view: top only reaches 165°, bottom 140°. The old 35°
+      // requirement never armed this range, so no rep could ever count.
+      final c = counter();
+      feed(c, 165, t0);
+      feed(c, 140, t0.add(const Duration(seconds: 1)));
+      expect(c.isCalibrated, isTrue);
+      // down = 140 + 0.25*25 ≈ 146, up = 140 + 0.75*25 ≈ 158
+      feed(c, 165, t0.add(const Duration(seconds: 2)));
+      expect(c.phase, PushupPhase.up);
+      expect(c.reps, 1); // arming happened at the bottom → this ascent counts
+      feed(c, 140, t0.add(const Duration(seconds: 3)));
+      expect(c.phase, PushupPhase.down);
+      expect(c.reps, 1); // no rep at the bottom
+      feed(c, 165, t0.add(const Duration(seconds: 4)));
+      expect(c.reps, 2);
+    });
+
     test('stays unknown at the bottom, arms at the top, no free rep', () {
       final c = counter();
       feed(c, 90, t0); // seen at the bottom first: stays unarmed

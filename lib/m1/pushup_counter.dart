@@ -21,7 +21,10 @@ class PushupCounter {
   PushupCounter({
     this.minRepInterval = const Duration(milliseconds: 600),
     this.smoothing = 0.4,
-    this.minCalibration = 35,
+    // 20° (was 35°): a foreshortened floor view often only moves the angle
+    // ~25°, and the old threshold never armed — the counter stayed stuck on
+    // "CALIBRATING" and no rep ever counted (M5 device report).
+    this.minCalibration = 20,
     this.rangeDecayPerSec = 0.5,
   });
 

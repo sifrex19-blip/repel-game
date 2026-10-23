@@ -131,7 +131,6 @@ class RepelGame extends FlameGame with TapCallbacks {
   // ---- feedback state ------------------------------------------------------
   double _shake = 0; // screen shake amplitude (px, decays)
   double _hitStop = 0; // frozen frames after a kill
-  double _comboPop = 0; // combo HUD pop animation clock
   double _time = 0; // always-running clock for ambient animation
   double _emberT = 0.8;
 
@@ -280,7 +279,6 @@ class RepelGame extends FlameGame with TapCallbacks {
     }
     _lastRepAt = now;
     combo++;
-    _comboPop = 0.18; // HUD pop on every new combo step
 
     save.totalReps++;
     if (combo > save.bestCombo) save.bestCombo = combo;
@@ -440,7 +438,6 @@ class RepelGame extends FlameGame with TapCallbacks {
       step = 0;
     }
     if (_shake > 0) _shake = max(0.0, _shake - dt * 16);
-    if (_comboPop > 0) _comboPop = max(0.0, _comboPop - dt);
     _time += dt;
     if (_baseFlash > 0) _baseFlash -= step;
 
@@ -586,19 +583,6 @@ class RepelGame extends FlameGame with TapCallbacks {
       shadows: [Shadow(color: kInk, offset: Offset(1, 1), blurRadius: 0)],
     ),
   );
-
-  TextPaint _comboStyle(Color c) => TextPaint(
-        style: TextStyle(
-          fontFamily: kPixelFont,
-          fontSize: 10,
-          color: c,
-          shadows: const [Shadow(color: kInk, offset: Offset(1, 1), blurRadius: 0)],
-        ),
-      );
-
-  late final TextPaint _comboW = _comboStyle(kWhite);
-  late final TextPaint _comboG = _comboStyle(kGold);
-  late final TextPaint _comboO = _comboStyle(const Color(0xFFFF6B4A));
 
   @override
   void render(Canvas canvas) {
@@ -938,24 +922,7 @@ class RepelGame extends FlameGame with TapCallbacks {
       Vector2(size.x - 16, 58),
       anchor: Anchor.topRight,
     );
-
-    if (combo >= 2) {
-      final m = comboMultiplier(combo);
-      final text = 'COMBO ${m.toStringAsFixed(1)}x';
-      final paint = m >= 1.8 ? _comboO : m >= 1.5 ? _comboG : _comboW;
-      // 3 discrete pop frames — frame-by-frame, never smoothly scaled.
-      final s = _comboPop > 0.12 ? 1.7 : _comboPop > 0.05 ? 1.3 : 1.0;
-      if (s == 1.0) {
-        paint.render(canvas, text, Vector2(size.x - 16, 80),
-            anchor: Anchor.topRight);
-      } else {
-        canvas.save();
-        canvas.translate(size.x - 16, 80);
-        canvas.scale(s, s);
-        paint.render(canvas, text, Vector2.zero(), anchor: Anchor.topRight);
-        canvas.restore();
-      }
-    }
+    // Combo lives in the Flutter rep panel (pixel meter + pop) since M5.1.
   }
 
   // -- banners (intro pop-in; later phases are covered by Flutter panels) ----

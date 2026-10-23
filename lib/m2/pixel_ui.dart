@@ -97,6 +97,41 @@ class _PixelButtonState extends State<PixelButton> {
   }
 }
 
+/// Ink-outlined, beveled panel face — the frame every HUD block sits in
+/// (rep counter, form meter, settings, chips). Same language as the shop
+/// and menu panels, scaled down for on-screen readouts.
+class PixelPanel extends StatelessWidget {
+  const PixelPanel({
+    super.key,
+    required this.child,
+    this.face = const Color(0xE60D0B14),
+    this.padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    this.outline = 3,
+    this.bevel = 2,
+  });
+
+  final Widget child;
+
+  /// Panel face fill — keep it translucent enough for the camera to read.
+  final Color face;
+  final EdgeInsets padding;
+  final double outline;
+  final double bevel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(outline),
+      color: kInk,
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(color: face, border: pixelBevel(bevel)),
+        child: child,
+      ),
+    );
+  }
+}
+
 /// Square ink-outlined gear button (opens settings) — shared by the home
 /// menu and the in-game HUD so both speak the same pixel language.
 class PixelGearButton extends StatefulWidget {
