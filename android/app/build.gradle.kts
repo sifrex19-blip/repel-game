@@ -31,9 +31,19 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Debug keys so `flutter run --release` and sideloaded builds
+            // work without a Play signing keystore.
             signingConfig = signingConfigs.getByName("debug")
+            // Shrink Kotlin/Java bytecode and strip unused resources.
+            // (The Dart AOT snapshot is already tree-shaken by the Dart
+            // compiler; ML Kit's native libs/models are kept via the
+            // conservative rules in proguard-rules.pro.)
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }

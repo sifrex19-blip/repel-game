@@ -8,42 +8,67 @@ import 'package:flutter/material.dart';
 
 import 'economy.dart';
 import 'enemy.dart';
+import 'game_camera.dart';
+import 'levels.dart';
 import 'pixel_art.dart';
 
-enum GamePhase { intro, fighting, waveCleared, defeat }
+enum GamePhase { menu, intro, fighting, waveCleared, victory, defeat }
 
-/// Immutable snapshot the Flutter side (HUD/shop) listens to.
+/// Immutable snapshot the Flutter side (HUD/shop/panels) listens to.
 class GameSnapshot {
   const GameSnapshot({
     required this.phase,
+    required this.levelId,
+    required this.levelName,
     required this.wave,
+    required this.totalWaves,
     required this.coins,
     required this.baseHp,
     required this.maxBaseHp,
     required this.combo,
     required this.restSeconds,
     required this.bestWave,
+    required this.unlockedLevel,
+    required this.clearedLevel,
+    required this.victoryBonus,
+    required this.totalReps,
+    required this.totalKills,
+    required this.bestCombo,
     required this.levels,
   });
 
   final GamePhase phase;
+  final int levelId;
+  final String levelName;
   final int wave;
+  final int totalWaves;
   final int coins;
   final int baseHp;
   final int maxBaseHp;
   final int combo;
   final int restSeconds;
   final int bestWave;
+  final int unlockedLevel;
+  final int clearedLevel;
+  final int victoryBonus;
+  final int totalReps;
+  final int totalKills;
+  final int bestCombo;
   final Map<UpgradeType, int> levels;
 }
 
 /// The combat game: waves of monsters march at your castle, every counted
-/// pushup deals damage, kills drop coins, coins buy upgrades between waves.
+/// pushup deals damage, kills drop coins, coins buy upgrades between waves —
+/// now structured as a campaign of [kLevels] with distinct biomes, enemy
+/// mixes and a boss finale per level.
 ///
-/// Rendering is pixel art throughout: hand-built ground/castle pictures
-/// (cached, rebuilt only on resize), animated torch flames and flag, pixel
-/// fonts for all text, and restrained feedback (sparks, poof, hit-stop,
-/// short screen shake) over the live camera feed.
+/// Rendering is pixel art throughout: hand-built background/ground/castle
+/// pictures (cached, rebuilt on resize or level change), animated torch
+/// flames and flag, pixel fonts for all text, and restrained feedback
+/// (sparks, poof, hit-stop, short screen shake) over the live camera feed.
+///
+/// The world renders in virtual 360p-high pixels through [ArenaCamera]; the
+/// HUD renders in screen space so it never moves with the world.
 class RepelGame extends FlameGame with TapCallbacks {
   /// X position of the castle gate — enemies stop just right of it and attack.
   static const double gateX = 96;
@@ -58,14 +83,26 @@ class RepelGame extends FlameGame with TapCallbacks {
   static const double _castleW = 60;
   static const double _castleH = 100; // merlons (14) + body (86)
 
+  /// Ground line — a fixed world constant now (the camera, not the device,
+  /// decides where it lands on screen).
+  static const double groundY = ArenaCamera.virtualHeight - 96;
+
+  final ArenaCamera cam = ArenaCamera();
+
   late PlayerSave save;
+
+  /// The level being played (also carries palette + enemy mix + pacing).
+  LevelDef currentLevel = kLevels.first;
 
   int wave = 1;
   late int baseHp = maxBaseHp(save.levelOf(UpgradeType.fortress));
-  GamePhase phase = GamePhase.intro;
+  GamePhase phase = GamePhase.menu;
 
   /// Counts down: intro "get ready" time, or seconds until the next wave.
   double phaseTimer = introSeconds;
+
+  /// Coin bonus granted by the last level victory (0 on replays).
+  int victoryBonus = 0;
 
   /// Current combo chain (consecutive reps inside the combo window).
   int combo = 0;
@@ -77,6 +114,20 @@ class RepelGame extends FlameGame with TapCallbacks {
   final _rng = Random();
   double _baseFlash = 0;
 
+  /// Coin/state changes are debounced: persisted at wave clears, level
+  /// starts, purchases and app pause — never once per kill.
+  bool _saveDirty = false;
+
+  void _markDirty() => _saveDirty = true;
+
+  /// Persists if anything changed since the last write. Called on phase
+  /// transitions and by the screen lifecycle (pause/dispose).
+  Future<void> saveIfDirty() async {
+    if (!_saveDirty) return;
+    _saveDirty = false;
+    await save.persist();
+  }
+
   // ---- feedback state ------------------------------------------------------
   double _shake = 0; // screen shake amplitude (px, decays)
   double _hitStop = 0; // frozen frames after a kill
@@ -84,7 +135,8 @@ class RepelGame extends FlameGame with TapCallbacks {
   double _time = 0; // always-running clock for ambient animation
   double _emberT = 0.8;
 
-  // ---- cached pictures (rebuilt on resize) ---------------------------------
+  // ---- cached pictures (rebuilt on resize / level change) ------------------
+  ui.Picture? _bgPic;
   ui.Picture? _groundPic;
   ui.Picture? _lipPic;
   ui.Picture? _castlePic;
@@ -92,28 +144,36 @@ class RepelGame extends FlameGame with TapCallbacks {
 
   /// Emitted whenever the shop/HUD-visible state changes.
   final ValueNotifier<GameSnapshot> snapshot = ValueNotifier(const GameSnapshot(
-    phase: GamePhase.intro,
+    phase: GamePhase.menu,
+    levelId: 1,
+    levelName: 'MOSSGATE',
     wave: 1,
+    totalWaves: 4,
     coins: 0,
     baseHp: 80,
     maxBaseHp: 80,
     combo: 0,
     restSeconds: 10,
     bestWave: 0,
+    unlockedLevel: 1,
+    clearedLevel: 0,
+    victoryBonus: 0,
+    totalReps: 0,
+    totalKills: 0,
+    bestCombo: 0,
     levels: {},
   ));
-
-  /// Ground line — enemies and castle stand on it.
-  double get groundY => size.y - 96;
 
   int get _enemiesAlive => children.whereType<Enemy>().length;
   int get enemiesLeft => _toSpawn + _enemiesAlive;
 
-  // ---- Wave configuration (prototype balance — tune after playtest) ----
+  // ---- Wave configuration: level-scaled prototype balance ----------------
   int enemyCountFor(int w) => min(3 + w, 12);
-  int hpFor(int w) => 2 + w + (w ~/ 3);
-  double speedFor(int w) => min(30 + w * 2.5, 66.0);
-  int damageFor(int w) => 3 + w ~/ 2;
+  int hpFor(int w) => max(1, ((2 + w + w ~/ 3) * currentLevel.hpScale).round());
+  double speedFor(int w) =>
+      min(30 + w * 2.5, 66.0) * currentLevel.speedScale;
+  int damageFor(int w) =>
+      max(1, ((3 + w ~/ 2) * currentLevel.damageScale).round());
 
   /// Deterministic scatter hash — handcrafted-looking, never random per frame.
   static int _hash(int v) {
@@ -128,30 +188,69 @@ class RepelGame extends FlameGame with TapCallbacks {
   Future<void> onLoad() async {
     save = await PlayerSave.load();
     baseHp = maxBaseHp(save.levelOf(UpgradeType.fortress));
-    startWave(1);
+    // Resume the campaign where the player left off (menu shows the roster).
+    currentLevel = levelById(save.lastLevel);
+    if (size.x > 0) _rebuildPictures();
+    phase = GamePhase.menu;
+    _publish();
   }
 
   @override
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
-    _groundPic = _buildGround(size.x);
-    _lipPic = _buildLip(size.x);
-    _castlePic = _buildCastle(hit: false);
-    _castleHitPic = _buildCastle(hit: true);
+    cam.resize(size);
+    _rebuildPictures();
   }
 
-  void startWave(int w) {
-    wave = w;
+  /// Rebuild the per-level cached pictures (resize or level change).
+  void _rebuildPictures() {
+    if (size.x <= 0 || size.y <= 0) return;
+    final w = cam.worldWidth;
+    final pal = currentLevel.palette;
+    _bgPic = _buildBackground(w, pal);
+    _groundPic = _buildGround(w, pal);
+    _lipPic = _buildLip(w, pal);
+    _castlePic = _buildCastle(hit: false, pal: pal);
+    _castleHitPic = _buildCastle(hit: true, pal: pal);
+  }
+
+  /// Enters level [id]: resets the camera/field/state and starts wave 1.
+  void startLevel(int id) {
+    currentLevel = levelById(id);
+    save.lastLevel = currentLevel.id;
+    _markDirty();
+    saveIfDirty();
+    _shake = 0;
+    _hitStop = 0;
+    _victoryCleanup();
+    _rebuildPictures();
     baseHp = maxBaseHp(save.levelOf(UpgradeType.fortress));
+    _startWave(1);
+  }
+
+  void _victoryCleanup() {
     for (final e in children.whereType<Enemy>()) {
       e.removeFromParent();
     }
     for (final p in children.whereType<Projectile>()) {
       p.removeFromParent();
     }
+    for (final t in children.whereType<FloatingText>()) {
+      t.removeFromParent();
+    }
+    for (final p in children.whereType<PixelParticle>()) {
+      p.removeFromParent();
+    }
+  }
+
+  void _startWave(int w) {
+    wave = w;
+    baseHp = maxBaseHp(save.levelOf(UpgradeType.fortress));
+    _victoryCleanup();
     _toSpawn = enemyCountFor(w);
     _spawnTimer = 0;
     combo = 0;
+    _lastRepAt = null;
     _autoTimer = autoInterval(save.levelOf(UpgradeType.speed));
     phase = GamePhase.intro;
     phaseTimer = introSeconds;
@@ -166,12 +265,17 @@ class RepelGame extends FlameGame with TapCallbacks {
     final now = DateTime.now();
     final window = comboWindow(save.levelOf(UpgradeType.combo));
     if (_lastRepAt != null &&
-        now.difference(_lastRepAt!) > Duration(milliseconds: (window * 1000).round())) {
+        now.difference(_lastRepAt!) >
+            Duration(milliseconds: (window * 1000).round())) {
       combo = 0;
     }
     _lastRepAt = now;
     combo++;
     _comboPop = 0.18; // HUD pop on every new combo step
+
+    save.totalReps++;
+    if (combo > save.bestCombo) save.bestCombo = combo;
+    _markDirty();
 
     final damage =
         (repDamage(save.levelOf(UpgradeType.power)) * comboMultiplier(combo))
@@ -182,7 +286,10 @@ class RepelGame extends FlameGame with TapCallbacks {
         .where((e) => !e.dead)
         .toList()
       ..sort((a, b) => a.position.x.compareTo(b.position.x));
-    if (enemies.isEmpty) return;
+    if (enemies.isEmpty) {
+      _publish(); // combo HUD still updates while the field is empty
+      return;
+    }
 
     final target = enemies.first; // most advanced enemy gets hit
     add(Projectile(
@@ -207,6 +314,7 @@ class RepelGame extends FlameGame with TapCallbacks {
     if (baseHp == 0) {
       phase = GamePhase.defeat;
       _shake = 8;
+      saveIfDirty(); // persist progress at the moment it's at risk
       _publish();
     }
   }
@@ -214,7 +322,8 @@ class RepelGame extends FlameGame with TapCallbacks {
   void enemyKilled(Enemy enemy) {
     final drop = killCoins(wave, boss: enemy.isBoss);
     save.coins += drop;
-    save.persist();
+    save.totalKills++;
+    _markDirty(); // persisted at wave clear / level start / app pause
     _hitStop = max(_hitStop, 0.05); // short freeze makes the kill land
     add(FloatingText(
       position: enemy.position + Vector2(0, -30),
@@ -227,6 +336,7 @@ class RepelGame extends FlameGame with TapCallbacks {
 
   /// Chunky impact sparks in the pixel palette (event-driven, self-removing).
   void spawnSparks(Vector2 pos, Color color, {int count = 5, double spread = 120}) {
+    if (children.length > 320) return; // hard cap keeps spikes bounded
     final light = pixelLighten(color, 0.5);
     for (var i = 0; i < count; i++) {
       final ang = _rng.nextDouble() * pi * 2;
@@ -244,6 +354,7 @@ class RepelGame extends FlameGame with TapCallbacks {
 
   /// Death poof: a ring of body-colored squares that pops and settles.
   void spawnPoof(Vector2 pos, Color color) {
+    if (children.length > 320) return;
     final light = pixelLighten(color, 0.45);
     for (var i = 0; i < 9; i++) {
       final ang = (i / 9) * pi * 2 + _rng.nextDouble() * 0.6;
@@ -269,20 +380,44 @@ class RepelGame extends FlameGame with TapCallbacks {
     return ok;
   }
 
-  /// Flutter-facing triggers (shop buttons / taps on banners).
-  void nextWave() => startWave(wave + 1);
-  void retryWave() => startWave(wave);
+  /// Flutter-facing triggers (shop/panel buttons / taps on banners).
+  void nextWave() {
+    if (phase != GamePhase.waveCleared) return;
+    if (wave >= currentLevel.waves) return; // final wave ends in victory
+    _startWave(wave + 1);
+  }
+
+  void retryWave() {
+    if (phase != GamePhase.defeat) return;
+    _startWave(wave);
+  }
+
+  /// Back to the level select (progress and coins stay persisted).
+  void toMenu() {
+    phase = GamePhase.menu;
+    saveIfDirty();
+    _publish();
+  }
 
   void _publish() {
     snapshot.value = GameSnapshot(
       phase: phase,
+      levelId: currentLevel.id,
+      levelName: currentLevel.name,
       wave: wave,
+      totalWaves: currentLevel.waves,
       coins: save.coins,
       baseHp: baseHp,
       maxBaseHp: maxBaseHp(save.levelOf(UpgradeType.fortress)),
       combo: combo,
       restSeconds: max(0, phaseTimer.ceil()),
       bestWave: save.bestWave,
+      unlockedLevel: save.unlockedLevel,
+      clearedLevel: save.clearedLevel,
+      victoryBonus: victoryBonus,
+      totalReps: save.totalReps,
+      totalKills: save.totalKills,
+      bestCombo: save.bestCombo,
       levels: Map.unmodifiable(save.levels),
     );
   }
@@ -304,7 +439,7 @@ class RepelGame extends FlameGame with TapCallbacks {
 
     // Ambient: a stray ember drifts up off a torch now and then.
     _emberT -= step;
-    if (_emberT <= 0) {
+    if (_emberT <= 0 && phase != GamePhase.menu && children.length < 320) {
       _emberT = 0.55 + _rng.nextDouble() * 0.7;
       final left = _rng.nextBool();
       add(PixelParticle(
@@ -318,6 +453,9 @@ class RepelGame extends FlameGame with TapCallbacks {
     }
 
     switch (phase) {
+      case GamePhase.menu:
+        break; // the world idles behind the Flutter menu overlay
+
       case GamePhase.intro:
         phaseTimer -= step;
         if (phaseTimer <= 0) phase = GamePhase.fighting;
@@ -342,17 +480,28 @@ class RepelGame extends FlameGame with TapCallbacks {
           }
         }
 
-        _spawnTimer -= step;
+        _spawnTimer -= step * 1000;
         if (_toSpawn > 0 && _spawnTimer <= 0) {
           _spawnEnemy();
-          _spawnTimer = 2.2;
+          _spawnTimer = currentLevel.spawnMs.toDouble();
         }
         if (_toSpawn == 0 && _enemiesAlive == 0) {
-          phase = GamePhase.waveCleared;
-          phaseTimer = restSeconds;
           save.coins += waveClearCoins(wave);
           save.bestWave = max(save.bestWave, wave);
-          save.persist();
+          _markDirty();
+          if (wave >= currentLevel.waves) {
+            // Level complete: grant the first-clear bonus exactly once.
+            victoryBonus = save.grantLevelClear(currentLevel.id, currentLevel.clearCoins)
+                ? currentLevel.clearCoins
+                : 0;
+            phase = GamePhase.victory;
+            _shake = max(_shake, 5);
+            saveIfDirty();
+          } else {
+            phase = GamePhase.waveCleared;
+            phaseTimer = restSeconds;
+            saveIfDirty();
+          }
           _publish();
         }
 
@@ -362,25 +511,32 @@ class RepelGame extends FlameGame with TapCallbacks {
         if (s != snapshot.value.restSeconds) _publish();
         if (phaseTimer <= 0) nextWave();
 
+      case GamePhase.victory:
       case GamePhase.defeat:
-        break;
+        break; // Flutter panels drive these transitions
     }
   }
 
   void _spawnEnemy() {
     final spawnIndex = enemyCountFor(wave) - _toSpawn - 1;
-    final isBoss = wave % 5 == 0 && spawnIndex == 0;
+    final isBoss = currentLevel.bossWave != 0 &&
+        wave == currentLevel.bossWave &&
+        spawnIndex == 0;
+    final variant = isBoss
+        ? EnemyVariant.boss
+        : currentLevel.pickVariant(_rng.nextDouble());
     _toSpawn--;
 
-    final radius = isBoss ? 44.0 : 24.0;
+    final radius = variant.radius;
     final y =
         groundY - radius + (_rng.nextDouble() * 16 - 8); // slight lane jitter
     add(Enemy(
-      maxHp: hpFor(wave) * (isBoss ? 4 : 1),
-      speed: speedFor(wave) * (isBoss ? 0.75 : 1),
-      baseDamage: damageFor(wave),
-      isBoss: isBoss,
-      spawnPosition: Vector2(size.x + 70, y),
+      maxHp: (hpFor(wave) * variant.hpMult).round(),
+      speed: speedFor(wave) * variant.speedMult,
+      baseDamage: (damageFor(wave) * variant.damageMult).round(),
+      variant: variant,
+      color: currentLevel.palette.hueOf(variant),
+      spawnPosition: Vector2(cam.worldWidth + 70, y),
     ));
   }
 
@@ -437,7 +593,8 @@ class RepelGame extends FlameGame with TapCallbacks {
 
   @override
   void render(Canvas canvas) {
-    // Short, integer-pixel screen shake — world shakes, HUD stays readable.
+    // Short, integer-pixel screen shake — applied to the world transform
+    // only; the HUD below renders outside it and stays put.
     var sx = 0.0, sy = 0.0;
     if (_shake > 0) {
       sx = ((_rng.nextDouble() * 2 - 1) * _shake).roundToDouble();
@@ -446,32 +603,73 @@ class RepelGame extends FlameGame with TapCallbacks {
     canvas.save();
     canvas.translate(sx, sy);
 
+    // World: virtual-resolution camera transform (fixed arena — the camera
+    // maps world pixels to the screen, it never moves or follows).
+    cam.beginWorld(canvas);
+    if (_bgPic != null) canvas.drawPicture(_bgPic!);
     if (_groundPic != null) canvas.drawPicture(_groundPic!);
     super.render(canvas); // enemies, tracers, particles, numbers
     if (_lipPic != null) canvas.drawPicture(_lipPic!); // grass in front of feet
     _renderBase(canvas);
+    cam.endWorld(canvas);
 
     canvas.restore();
 
+    // Screen space: letterbox margins (ultra-wide only) + fixed HUD.
+    cam.paintLetterbox(canvas, size);
     _renderHud(canvas);
     _renderBanners(canvas);
   }
 
-  // -- ground (built once per size) -----------------------------------------
+  // -- background: atmosphere wash + hills + moon (built per level) ---------
 
-  ui.Picture _buildGround(double w) {
+  ui.Picture _buildBackground(double w, LevelPalette pal) {
+    final rec = ui.PictureRecorder();
+    final c = Canvas(rec);
+    final p = Paint()..isAntiAlias = false;
+
+    // Atmosphere wash over the whole world (camera ghosts through).
+    p.color = pal.wash;
+    c.drawRect(Rect.fromLTWH(0, 0, w, ArenaCamera.virtualHeight), p);
+
+    // Moon/sun: flag-tinted pixel disc, fixed spot, 2-frame-free.
+    final mx = (w * 0.62).floorToDouble();
+    p.color = pal.flag.withValues(alpha: 0.35);
+    c.drawRect(Rect.fromLTWH(mx + 4, 44, 12, 4), p);
+    c.drawRect(Rect.fromLTWH(mx, 48, 20, 12), p);
+    c.drawRect(Rect.fromLTWH(mx + 4, 60, 12, 4), p);
+    p.color = pal.flag.withValues(alpha: 0.18);
+    c.drawRect(Rect.fromLTWH(mx + 2, 50, 5, 5), p); // crater nick
+
+    // Distant hill silhouettes — chunky deterministic bumps on the horizon.
+    p.color = pal.hill;
+    for (var gx = -20.0; gx < w + 40; gx += 44) {
+      final h = _hash(gx.round() * 13 + 7);
+      final hh = 18.0 + (h % 40); // 18–57 px tall
+      final hw = 30.0 + (h ~/ 3) % 26;
+      c.drawRect(Rect.fromLTWH(gx, groundY - hh, hw, hh), p);
+      if (h % 3 == 0) {
+        c.drawRect(Rect.fromLTWH(gx + 6, groundY - hh - 6, hw - 14, 6), p);
+      }
+    }
+    return rec.endRecording();
+  }
+
+  // -- ground (built once per size + level) --------------------------------
+
+  ui.Picture _buildGround(double w, LevelPalette pal) {
     const bandH = 96.0;
     const soilY = 44.0;
     final rec = ui.PictureRecorder();
     final c = Canvas(rec);
     final p = Paint()..isAntiAlias = false;
 
-    // Base — dark mossy ground, semi-translucent so the camera ghosts
-    // through as living texture instead of a flat black bar.
-    p.color = const Color(0xC71A241D);
+    // Base — semi-translucent so the camera ghosts through as living
+    // texture instead of a flat black bar.
+    p.color = pal.band;
     c.drawRect(Rect.fromLTWH(0, 0, w, bandH), p);
     // Deeper soil stratum.
-    p.color = const Color(0xD9141118);
+    p.color = pal.soil;
     c.drawRect(Rect.fromLTWH(0, soilY, w, bandH - soilY), p);
 
     // Deterministic hand-scattered texture: pebbles, tufts of moss, cracks.
@@ -480,18 +678,18 @@ class RepelGame extends FlameGame with TapCallbacks {
       if (h % 5 <= 1) {
         final px = (gx + h % 11).toDouble();
         final py = (soilY + 6 + (h ~/ 3) % 44).toDouble();
-        p.color = const Color(0xFF3A4048);
+        p.color = pal.pebble;
         c.drawRect(Rect.fromLTWH(px, py, 6, 3), p);
-        p.color = const Color(0xFF4E5663);
+        p.color = pal.pebbleLight;
         c.drawRect(Rect.fromLTWH(px, py, 3, 1), p);
       } else if (h % 5 == 2) {
         final sx = (gx + h % 9).toDouble();
         final sy = (8 + (h ~/ 5) % 76).toDouble();
-        p.color = const Color(0xFF2B321F);
+        p.color = pal.moss;
         c.drawRect(Rect.fromLTWH(sx, sy, 4, 4), p);
       } else if (h % 7 == 3) {
         final cx = (gx + h % 5).toDouble();
-        p.color = const Color(0xFF0F120F);
+        p.color = pal.crack;
         c.drawRect(Rect.fromLTWH(cx, soilY + 4, 2, 26), p);
       }
     }
@@ -499,22 +697,22 @@ class RepelGame extends FlameGame with TapCallbacks {
   }
 
   /// The lit grass lip — drawn *after* characters so they stand in the grass.
-  ui.Picture _buildLip(double w) {
+  ui.Picture _buildLip(double w, LevelPalette pal) {
     final rec = ui.PictureRecorder();
     final c = Canvas(rec);
     final p = Paint()..isAntiAlias = false;
-    p.color = const Color(0xFF33543F);
+    p.color = pal.lip;
     c.drawRect(Rect.fromLTWH(0, 0, w, 3), p);
-    p.color = const Color(0xFF1E3327);
+    p.color = pal.lipDark;
     c.drawRect(Rect.fromLTWH(0, 3, w, 2), p);
     for (var gx = 0; gx < w + 8; gx += 12) {
       final h = _hash(gx * 3 + 5);
       if (h % 5 == 0 || h % 7 == 3) {
         final bx = (gx + h % 7).toDouble();
-        p.color = const Color(0xFF4E8C63);
+        p.color = pal.lipBlade;
         c.drawRect(Rect.fromLTWH(bx, -5, 3, 7), p);
         if (h % 3 == 0) {
-          p.color = const Color(0xFF6FBF73);
+          p.color = pal.lipBladeLight;
           c.drawRect(Rect.fromLTWH(bx, -5, 1, 4), p);
         }
       }
@@ -522,19 +720,19 @@ class RepelGame extends FlameGame with TapCallbacks {
     return rec.endRecording();
   }
 
-  // -- castle (built once; hit variant is a brightened flash) ---------------
+  // -- castle (built per level; hit variant is a brightened flash) ---------
 
-  ui.Picture _buildCastle({required bool hit}) {
+  ui.Picture _buildCastle({required bool hit, required LevelPalette pal}) {
     Color tone(Color c) => hit ? pixelLighten(c, 0.72) : c;
-    const mortar = Color(0xFF263238);
-    const outline = Color(0xFF1C262B);
-    const chip = Color(0xFF607D8B);
+    final mortar = pal.mortar;
+    final outline = pal.outline;
+    final chip = pal.chip;
 
     Color stone(int h) {
       final m = h % 10;
-      if (m == 0 || m == 1) return const Color(0xFF37474F);
-      if (m == 2) return const Color(0xFF546E7A);
-      return const Color(0xFF455A64);
+      if (m == 0 || m == 1) return pal.stoneDark;
+      if (m == 2) return pal.stoneLight;
+      return pal.stone;
     }
 
     final rec = ui.PictureRecorder();
@@ -602,10 +800,10 @@ class RepelGame extends FlameGame with TapCallbacks {
     p.color = tone(mortar); // arch corners knocked out of the plank tops
     c.drawRect(Rect.fromLTWH(16, 66, 4, 4), p);
     c.drawRect(Rect.fromLTWH(40, 66, 4, 4), p);
-    p.color = tone(const Color(0xFF37474F));
+    p.color = tone(pal.stoneDark);
     c.drawRect(Rect.fromLTWH(16, 74, 28, 3), p);
     c.drawRect(Rect.fromLTWH(16, 90, 28, 3), p);
-    p.color = tone(const Color(0xFF90A4AE));
+    p.color = tone(pal.stoneLight);
     for (final rx in [20.0, 30.0, 40.0]) {
       c.drawRect(Rect.fromLTWH(rx, 74, 2, 2), p);
       c.drawRect(Rect.fromLTWH(rx, 90, 2, 2), p);
@@ -613,10 +811,10 @@ class RepelGame extends FlameGame with TapCallbacks {
     c.drawRect(Rect.fromLTWH(33, 81, 3, 5), p); // handle
 
     // Torch brackets flanking the gate.
-    p.color = tone(const Color(0xFF37474F));
+    p.color = tone(pal.stoneDark);
     c.drawRect(Rect.fromLTWH(4, 54, 5, 8), p);
     c.drawRect(Rect.fromLTWH(50, 54, 5, 8), p);
-    p.color = tone(const Color(0xFF263238));
+    p.color = tone(mortar);
     c.drawRect(Rect.fromLTWH(5, 54, 3, 2), p);
     c.drawRect(Rect.fromLTWH(51, 54, 3, 2), p);
 
@@ -679,14 +877,14 @@ class RepelGame extends FlameGame with TapCallbacks {
     final top = groundY - 128;
     final p = Paint()..isAntiAlias = false;
 
-    p.color = const Color(0xFF37474F);
+    p.color = currentLevel.palette.stoneDark;
     canvas.drawRect(Rect.fromLTWH(x, top, 2, 28), p);
-    p.color = const Color(0xFF78909C);
+    p.color = currentLevel.palette.stoneLight;
     canvas.drawRect(Rect.fromLTWH(x, top, 2, 3), p);
 
     final bucket = (_time * 1.6).floor();
     final f = (bucket ^ (bucket >> 2)) & 1; // mostly alternates, occasional hold
-    p.color = kOrange;
+    p.color = currentLevel.palette.flag;
     if (f == 0) {
       canvas.drawRect(Rect.fromLTWH(x + 2, top + 2, 10, 11), p);
       p.color = kInk;
@@ -704,7 +902,7 @@ class RepelGame extends FlameGame with TapCallbacks {
   void _renderHud(Canvas canvas) {
     _hudPaint.render(
       canvas,
-      'WAVE $wave',
+      'WAVE $wave/${currentLevel.waves}',
       Vector2(size.x - 16, 14),
       anchor: Anchor.topRight,
     );
@@ -751,7 +949,7 @@ class RepelGame extends FlameGame with TapCallbacks {
     }
   }
 
-  // -- banners (intro pop-in; later phases are covered by the shop) ----------
+  // -- banners (intro pop-in; later phases are covered by Flutter panels) ----
 
   void _renderBanners(Canvas canvas) {
     switch (phase) {
@@ -759,29 +957,31 @@ class RepelGame extends FlameGame with TapCallbacks {
         final t = introSeconds - phaseTimer;
         final center = Vector2(size.x / 2, size.y * 0.34);
         final step = (t * 9).floor().clamp(0, 2);
+        final label = 'WAVE $wave';
         if (step >= 2) {
-          _bannerPaint.render(canvas, 'WAVE $wave', center,
-              anchor: Anchor.center);
+          _bannerPaint.render(canvas, label, center, anchor: Anchor.center);
         } else {
           final s = step == 0 ? 2.0 : 1.5;
           canvas.save();
           canvas.translate(center.x, center.y);
           canvas.scale(s, s);
-          _bannerPaint.render(canvas, 'WAVE $wave', Vector2.zero(),
+          _bannerPaint.render(canvas, label, Vector2.zero(),
               anchor: Anchor.center);
           canvas.restore();
         }
+        // Wave 1 doubles as the level intro — name the biome.
+        final sub = wave == 1 ? currentLevel.name : 'GET READY';
         if (t > 0.35 && (t * 3).floor().isEven) {
-          _subPaint.render(canvas, 'GET READY', center + Vector2(0, 46),
+          _subPaint.render(canvas, sub, center + Vector2(0, 46),
               anchor: Anchor.center);
         }
 
+      case GamePhase.menu:
       case GamePhase.fighting:
-        break;
-
+      case GamePhase.victory:
       case GamePhase.waveCleared:
       case GamePhase.defeat:
-        break; // Flutter shop panel covers these phases
+        break; // Flutter panels cover these phases
     }
   }
 }

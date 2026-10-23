@@ -2,6 +2,8 @@ import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'levels.dart';
+
 /// The four M3 upgrades (PLAN.md §3): power, speed, fortress, combo.
 enum UpgradeType { power, speed, fortress, combo }
 
@@ -83,38 +85,119 @@ String upgradeEffect(UpgradeType t, int level) => switch (t) {
 // ---------------------------------------------------------------------------
 
 /// Everything that survives an app restart, stored in shared_preferences.
+///
+/// M4 adds campaign progression (unlocked/cleared levels, resume point,
+/// lifetime stats). The pre-M4 flat keys (`coins`, `best_wave`, `up_*`) are
+/// kept as-is, so old saves migrate with full progress intact — every value
+/// is clamped on load, so corrupted or hand-edited storage can't break the
+/// game, and missing keys simply read as a fresh profile.
 class PlayerSave {
   PlayerSave({
     this.coins = 0,
     Map<UpgradeType, int>? levels,
     this.bestWave = 0,
+    this.unlockedLevel = 1,
+    this.clearedLevel = 0,
+    this.lastLevel = 1,
+    this.totalReps = 0,
+    this.totalKills = 0,
+    this.bestCombo = 0,
   }) : levels = levels ?? {for (final t in UpgradeType.values) t: 0};
+
+  /// Save-format version written by this build (diagnostic marker; loading
+  /// is shape-based, so pre-version saves migrate transparently).
+  static const int saveVersion = 2;
 
   int coins;
   final Map<UpgradeType, int> levels;
   int bestWave;
 
+  /// Highest playable level id, highest first-cleared level id, and the
+  /// level the player entered last (resume point for the menu).
+  int unlockedLevel;
+  int clearedLevel;
+  int lastLevel;
+
+  /// Lifetime stats shown on the menu.
+  int totalReps;
+  int totalKills;
+  int bestCombo;
+
   int levelOf(UpgradeType t) => levels[t] ?? 0;
+
+  bool isUnlocked(int levelId) => levelId <= unlockedLevel;
+
+  static int _readInt(SharedPreferences prefs, String key,
+      {int fallback = 0, int min = 0, int? max}) {
+    // Missing keys and wrong-typed (corrupt) values both read as fallback.
+    var v = prefs.getInt(key) ?? fallback;
+    if (v < min) v = min;
+    if (max != null && v > max) v = max;
+    return v;
+  }
+
+  /// Loads from preferences, migrating any older layout and clamping every
+  /// value into its legal range.
+  static PlayerSave fromPrefs(SharedPreferences prefs) {
+    final maxLevel = kLevels.length;
+    final unlocked =
+        _readInt(prefs, 'unlocked', fallback: 1, min: 1, max: maxLevel);
+    return PlayerSave(
+      coins: _readInt(prefs, 'coins'),
+      bestWave: _readInt(prefs, 'best_wave'),
+      levels: {
+        for (final t in UpgradeType.values)
+          t: _readInt(prefs, 'up_${t.name}', max: upgradeMaxLevel(t)),
+      },
+      unlockedLevel: unlocked,
+      clearedLevel: _readInt(prefs, 'cleared', max: maxLevel),
+      lastLevel:
+          _readInt(prefs, 'last_level', fallback: 1, min: 1, max: unlocked),
+      totalReps: _readInt(prefs, 'total_reps'),
+      totalKills: _readInt(prefs, 'total_kills'),
+      bestCombo: _readInt(prefs, 'best_combo'),
+    );
+  }
 
   static Future<PlayerSave> load() async {
     final prefs = await SharedPreferences.getInstance();
-    return PlayerSave(
-      coins: prefs.getInt('coins') ?? 0,
-      bestWave: prefs.getInt('best_wave') ?? 0,
-      levels: {
-        for (final t in UpgradeType.values)
-          t: prefs.getInt('up_${t.name}') ?? 0,
-      },
-    );
+    try {
+      return fromPrefs(prefs);
+    } catch (_) {
+      // Unreadable storage: start fresh rather than crash the game.
+      return PlayerSave();
+    }
   }
 
   Future<void> persist() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('save_version', saveVersion);
     await prefs.setInt('coins', coins);
     await prefs.setInt('best_wave', bestWave);
+    await prefs.setInt('unlocked', unlockedLevel);
+    await prefs.setInt('cleared', clearedLevel);
+    await prefs.setInt('last_level', lastLevel);
+    await prefs.setInt('total_reps', totalReps);
+    await prefs.setInt('total_kills', totalKills);
+    await prefs.setInt('best_combo', bestCombo);
     for (final t in UpgradeType.values) {
       await prefs.setInt('up_${t.name}', levelOf(t));
     }
+  }
+
+  /// Grants the first-clear bonus for completing [levelId] *in campaign
+  /// order*. Returns true exactly once per level: replays, repeated
+  /// completion events and out-of-order jumps grant nothing, so rewards can
+  /// never be double-credited.
+  bool grantLevelClear(int levelId, int bonus) {
+    if (levelId != clearedLevel + 1) return false;
+    clearedLevel = levelId;
+    if (levelId + 1 > unlockedLevel) {
+      unlockedLevel = min(levelId + 1, kLevels.length);
+    }
+    coins += bonus;
+    persist();
+    return true;
   }
 
   /// Attempts to buy the next level of [t]; persists on success.

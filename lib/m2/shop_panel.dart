@@ -3,32 +3,16 @@ import 'package:flutter/services.dart';
 
 import 'economy.dart';
 import 'pixel_art.dart';
+import 'pixel_ui.dart';
 import 'repel_game.dart';
-
-Border _bevel(double w) => Border(
-      top: BorderSide(color: kPanelLight, width: w),
-      left: BorderSide(color: kPanelLight, width: w),
-      bottom: BorderSide(color: kPanelDark, width: w),
-      right: BorderSide(color: kPanelDark, width: w),
-    );
-
-const _dimText = Color(0xFF8B84A8);
-
-TextStyle _px(double size, Color color, {double shadow = 1}) => TextStyle(
-      fontFamily: kPixelFont,
-      fontSize: size,
-      color: color,
-      shadows: [
-        Shadow(color: kInk, offset: Offset(shadow, shadow), blurRadius: 0),
-      ],
-    );
 
 /// The between-waves shop (and the defeat screen): buy the 4 upgrades with
 /// coins earned from kills and wave clears, then start the next wave.
 ///
-/// Handcrafted pixel UI: hard square corners, ink outlines, beveled panel
-/// faces, Press Start 2P headings, buttons that press *into* the panel, a
-/// segmented rest bar, and purchase feedback that floats off the card.
+/// Handcrafted pixel UI via the shared [pixel_ui] kit: hard square corners,
+/// ink outlines, beveled panel faces, Press Start 2P headings, buttons that
+/// press *into* the panel, a segmented rest bar, and purchase feedback that
+/// floats off the card.
 class ShopPanel extends StatelessWidget {
   const ShopPanel({super.key, required this.game});
 
@@ -61,7 +45,7 @@ class ShopPanel extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
                 decoration: BoxDecoration(
                   color: kPanelBg,
-                  border: _bevel(2),
+                  border: pixelBevel(2),
                 ),
                 child: SingleChildScrollView(
                   child: Column(
@@ -104,7 +88,7 @@ class ShopPanel extends StatelessWidget {
                       const SizedBox(height: 14),
                       SizedBox(
                         width: double.infinity,
-                        child: _PixelButton(
+                        child: PixelButton(
                           fill: defeated ? kRed : kOrange,
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           onPressed: () {
@@ -115,10 +99,29 @@ class ShopPanel extends StatelessWidget {
                             defeated
                                 ? 'RETRY WAVE ${snap.wave}'
                                 : 'START NEXT WAVE',
-                            style: _px(12, kWhite, shadow: 2),
+                            style: pixelText(12, kWhite, shadow: 2),
                           ),
                         ),
                       ),
+                      if (defeated) ...[
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: PixelButton(
+                            fill: kPanelDark,
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 8),
+                            onPressed: () {
+                              HapticFeedback.selectionClick();
+                              game.toMenu();
+                            },
+                            label: Text(
+                              'LEVEL SELECT',
+                              style: pixelText(9, kDimText),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -151,7 +154,7 @@ class _Header extends StatelessWidget {
             children: [
               Text(
                 defeated ? 'BASE DESTROYED' : 'WAVE ${snap.wave} CLEARED',
-                style: _px(16, defeated ? kRed : kWhite, shadow: 2),
+                style: pixelText(16, defeated ? kRed : kWhite, shadow: 2),
               ),
               if (!defeated) ...[
                 const SizedBox(height: 8),
@@ -169,7 +172,7 @@ class _Header extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text('REST', style: _px(9, _dimText)),
+                          Text('REST', style: pixelText(9, kDimText)),
                           const SizedBox(width: 8),
                           for (var i = 0; i < 10; i++)
                             Container(
@@ -181,7 +184,7 @@ class _Header extends StatelessWidget {
                                   : const Color(0xFF3A3352),
                             ),
                           const SizedBox(width: 8),
-                          Text('${snap.restSeconds}', style: _px(9, kWhite)),
+                          Text('${snap.restSeconds}', style: pixelText(9, kWhite)),
                         ],
                       ),
                       const SizedBox(height: 5),
@@ -209,12 +212,12 @@ class _Header extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
             color: kPanelFace,
-            border: _bevel(2),
+            border: pixelBevel(2),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const _PixelSprite(coinSprite, scale: 2, palette: coinPalette),
+              const PixelSprite(coinSprite, scale: 2, palette: coinPalette),
               const SizedBox(width: 8),
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 180),
@@ -227,7 +230,7 @@ class _Header extends StatelessWidget {
                 child: Text(
                   '${snap.coins}',
                   key: ValueKey(snap.coins),
-                  style: _px(14, kGold),
+                  style: pixelText(14, kGold),
                 ),
               ),
             ],
@@ -275,7 +278,7 @@ class _UpgradeCardState extends State<_UpgradeCard> {
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: affordable ? kPanelFace : kPanelBg,
-              border: _bevel(1),
+              border: pixelBevel(1),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -283,7 +286,7 @@ class _UpgradeCardState extends State<_UpgradeCard> {
               children: [
                 Text(
                   upgradeName(widget.type),
-                  style: _px(10, affordable ? kWhite : _dimText),
+                  style: pixelText(10, affordable ? kWhite : kDimText),
                 ),
                 const SizedBox(height: 6),
                 // Level pips on an ink backing — instant level read.
@@ -320,7 +323,7 @@ class _UpgradeCardState extends State<_UpgradeCard> {
                 const SizedBox(height: 9),
                 SizedBox(
                   width: double.infinity,
-                  child: _PixelButton(
+                  child: PixelButton(
                     fill: kOrange,
                     padding: const EdgeInsets.symmetric(vertical: 7),
                     onPressed: (cost == null || !affordable)
@@ -337,16 +340,16 @@ class _UpgradeCardState extends State<_UpgradeCard> {
                             }
                           },
                     label: cost == null
-                        ? Text('MAX LEVEL', style: _px(10, _dimText))
+                        ? Text('MAX LEVEL', style: pixelText(10, kDimText))
                         : Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text('BUY', style: _px(10, kWhite)),
+                              Text('BUY', style: pixelText(10, kWhite)),
                               const SizedBox(width: 8),
-                              const _PixelSprite(coinSprite,
+                              const PixelSprite(coinSprite,
                                   scale: 2, palette: coinPalette),
                               const SizedBox(width: 4),
-                              Text('$cost', style: _px(10, kWhite)),
+                              Text('$cost', style: pixelText(10, kWhite)),
                             ],
                           ),
                   ),
@@ -369,7 +372,7 @@ class _UpgradeCardState extends State<_UpgradeCard> {
                 child: Transform.translate(offset: Offset(0, -20 * t), child: child),
               ),
               child: IgnorePointer(
-                child: _PixelNumber('-$paid', color: kGold, scale: 2),
+                child: PixelNumber('-$paid', color: kGold, scale: 2),
               ),
             ),
           ),
@@ -378,145 +381,3 @@ class _UpgradeCardState extends State<_UpgradeCard> {
   }
 }
 
-/// Square pixel button: no Material chrome, ink outline, hard drop shadow,
-/// and a press state that shoves the face 2px down (shadow swallows it).
-class _PixelButton extends StatefulWidget {
-  const _PixelButton({
-    required this.label,
-    required this.onPressed,
-    this.fill = kOrange,
-    this.padding = const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-  });
-
-  final Widget label;
-  final VoidCallback? onPressed;
-  final Color fill;
-  final EdgeInsets padding;
-
-  @override
-  State<_PixelButton> createState() => _PixelButtonState();
-}
-
-class _PixelButtonState extends State<_PixelButton> {
-  bool _down = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.onPressed != null;
-    final fill = !enabled
-        ? kPanelDark
-        : _down
-            ? pixelShade(widget.fill, 0.78)
-            : widget.fill;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: enabled ? (_) => setState(() => _down = true) : null,
-      onTapUp: enabled
-          ? (_) {
-              setState(() => _down = false);
-              widget.onPressed!();
-            }
-          : null,
-      onTapCancel: enabled ? () => setState(() => _down = false) : null,
-      child: Transform.translate(
-        offset: Offset(0, _down ? 2 : 0),
-        child: Container(
-          padding: widget.padding,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: fill,
-            border: Border.all(color: kInk, width: 2),
-            boxShadow: enabled
-                ? const [
-                    BoxShadow(
-                      color: kInk,
-                      offset: Offset(0, 3),
-                      blurRadius: 0,
-                    ),
-                  ]
-                : null,
-          ),
-          child: widget.label,
-        ),
-      ),
-    );
-  }
-}
-
-/// Hand-authored sprite as a Flutter widget (draws through the shared
-/// cached-picture renderer, so it stays crisp and cheap).
-class _PixelSprite extends StatelessWidget {
-  const _PixelSprite(
-    this.art, {
-    this.scale = 2,
-    this.palette = const {},
-  });
-
-  final List<String> art;
-  final int scale;
-  final Map<String, Color> palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size(
-        art.first.length * scale.toDouble(),
-        art.length * scale.toDouble(),
-      ),
-      painter: _SpritePainter(art, scale, palette),
-    );
-  }
-}
-
-class _SpritePainter extends CustomPainter {
-  const _SpritePainter(this.art, this.scale, this.palette);
-
-  final List<String> art;
-  final int scale;
-  final Map<String, Color> palette;
-
-  @override
-  void paint(Canvas canvas, Size size) =>
-      drawSprite(canvas, art, x: 0, y: 0, scale: scale, palette: palette);
-
-  @override
-  bool shouldRepaint(_SpritePainter old) =>
-      old.art != art || old.scale != scale || old.palette != palette;
-}
-
-/// 3×5 pixel digits as a Flutter widget (same font as the game world).
-class _PixelNumber extends StatelessWidget {
-  const _PixelNumber(this.text, {this.scale = 2, this.color = kWhite});
-
-  final String text;
-  final int scale;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size(
-        numberWidth(text, scale).toDouble(),
-        5 * scale.toDouble(),
-      ),
-      painter: _NumberPainter(text, scale, color),
-    );
-  }
-}
-
-class _NumberPainter extends CustomPainter {
-  const _NumberPainter(this.text, this.scale, this.color);
-
-  final String text;
-  final int scale;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) =>
-      drawNumber(canvas, text, x: 0, y: 0, scale: scale, color: color);
-
-  @override
-  bool shouldRepaint(_NumberPainter old) =>
-      old.text != text || old.scale != scale || old.color != color;
-}

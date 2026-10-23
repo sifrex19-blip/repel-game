@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:repel_game/m2/economy.dart';
+import 'package:repel_game/m2/levels.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -105,6 +106,119 @@ void main() {
         expect(save.buy(t), isFalse, reason: '${t.name} already maxed');
       }
       expect(save.coins, 100000);
+    });
+  });
+
+  group('PlayerSave migration', () {
+    test('v1 save (flat keys only) keeps coins, upgrades and best wave',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'coins': 120,
+        'best_wave': 7,
+        'up_power': 3,
+        'up_combo': 2,
+      });
+      final save = await PlayerSave.load();
+      expect(save.coins, 120);
+      expect(save.bestWave, 7);
+      expect(save.levelOf(UpgradeType.power), 3);
+      expect(save.levelOf(UpgradeType.combo), 2);
+      expect(save.levelOf(UpgradeType.speed), 0);
+      // Progression defaults for pre-M4 saves.
+      expect(save.unlockedLevel, 1);
+      expect(save.clearedLevel, 0);
+      expect(save.lastLevel, 1);
+      expect(save.totalReps, 0);
+    });
+
+    test('fresh install loads a clean profile', () async {
+      SharedPreferences.setMockInitialValues({});
+      final save = await PlayerSave.load();
+      expect(save.coins, 0);
+      expect(save.unlockedLevel, 1);
+      expect(save.isUnlocked(1), isTrue);
+      expect(save.isUnlocked(2), isFalse);
+    });
+
+    test('corrupt values are clamped into legal ranges', () async {
+      SharedPreferences.setMockInitialValues({
+        'coins': -50,
+        'up_power': 99,
+        'unlocked': 999,
+        'cleared': -3,
+        'last_level': 50,
+        'total_reps': -1,
+      });
+      final save = await PlayerSave.load();
+      expect(save.coins, 0);
+      expect(save.levelOf(UpgradeType.power),
+          upgradeMaxLevel(UpgradeType.power));
+      expect(save.unlockedLevel, kLevels.length);
+      expect(save.clearedLevel, 0);
+      expect(save.lastLevel, lessThanOrEqualTo(save.unlockedLevel));
+      expect(save.totalReps, 0);
+    });
+
+    test('v2 roundtrip survives persist + reload', () async {
+      SharedPreferences.setMockInitialValues({});
+      var save = await PlayerSave.load();
+      save.coins = 55;
+      save.unlockedLevel = 3;
+      save.clearedLevel = 2;
+      save.lastLevel = 3;
+      save.totalReps = 41;
+      save.totalKills = 23;
+      save.bestCombo = 6;
+      save.levels[UpgradeType.speed] = 4;
+      await save.persist();
+
+      save = await PlayerSave.load();
+      expect(save.coins, 55);
+      expect(save.unlockedLevel, 3);
+      expect(save.clearedLevel, 2);
+      expect(save.lastLevel, 3);
+      expect(save.totalReps, 41);
+      expect(save.totalKills, 23);
+      expect(save.bestCombo, 6);
+      expect(save.levelOf(UpgradeType.speed), 4);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getInt('save_version'), PlayerSave.saveVersion);
+    });
+  });
+
+  group('PlayerSave.grantLevelClear', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test('pays the bonus and unlocks the next level exactly once', () {
+      final save = PlayerSave(coins: 10);
+      expect(save.grantLevelClear(1, 40), isTrue);
+      expect(save.coins, 50);
+      expect(save.clearedLevel, 1);
+      expect(save.unlockedLevel, 2);
+
+      // Replaying level 1 grants nothing.
+      expect(save.grantLevelClear(1, 40), isFalse);
+      expect(save.coins, 50);
+
+      // Sequential progression continues.
+      expect(save.grantLevelClear(2, 60), isTrue);
+      expect(save.coins, 110);
+      expect(save.unlockedLevel, 3);
+
+      // Out-of-order jumps grant nothing.
+      expect(save.grantLevelClear(5, 999), isFalse);
+      expect(save.coins, 110);
+    });
+
+    test('unlocks never exceed the campaign length', () {
+      final save = PlayerSave(
+        clearedLevel: kLevels.length - 1,
+        unlockedLevel: kLevels.length - 1,
+      );
+      expect(save.grantLevelClear(kLevels.length, 300), isTrue);
+      expect(save.unlockedLevel, kLevels.length);
+      expect(save.isUnlocked(kLevels.length), isTrue);
     });
   });
 }

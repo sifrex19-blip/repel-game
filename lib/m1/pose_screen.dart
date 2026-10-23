@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 import '../m2/pixel_art.dart';
+import '../m2/level_ui.dart';
 import '../m2/repel_game.dart';
 import '../m2/shop_panel.dart';
 import 'pose_detector_service.dart';
@@ -186,6 +187,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
       _stopStream();
+      _game.saveIfDirty(); // flush debounced coin/progress changes
       _game.pauseEngine();
     } else if (state == AppLifecycleState.resumed) {
       _readOrientation();
@@ -204,6 +206,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopStream();
+    _game.saveIfDirty();
     _game.pauseEngine();
     _service.close();
     super.dispose();
@@ -419,6 +422,11 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
+
+          // M4: level select / victory overlays — each hides itself unless
+          // its phase is active, so they never overlap the shop.
+          MenuPanel(game: _game),
+          VictoryPanel(game: _game),
 
           // M3: between-waves shop / defeat screen — topmost layer so it
           // covers the HUD while the player rests and shops.

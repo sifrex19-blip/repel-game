@@ -1,6 +1,7 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import 'levels.dart';
 import 'pixel_art.dart';
 import 'repel_game.dart';
 
@@ -18,11 +19,12 @@ class Enemy extends CircleComponent with HasGameReference<RepelGame> {
     required this.speed,
     required this.baseDamage,
     required Vector2 spawnPosition,
-    required this.isBoss,
+    required this.variant,
+    required this._color,
   })  : hp = maxHp,
         super(
           position: spawnPosition,
-          radius: isBoss ? 44 : 24,
+          radius: variant.radius,
           anchor: Anchor.center,
         );
 
@@ -30,19 +32,28 @@ class Enemy extends CircleComponent with HasGameReference<RepelGame> {
   final int maxHp;
   final double speed;
   final int baseDamage;
-  final bool isBoss;
 
-  static const _palette = [
-    Color(0xFFFF5252),
-    Color(0xFFFF9800),
-    Color(0xFFE040FB),
-    Color(0xFF29B6F6),
-    Color(0xFF66BB6A),
-  ];
+  /// Body type — decides sprite, scale, radius and stat multipliers.
+  final EnemyVariant variant;
 
+  /// Level-palette hue this enemy was spawned with (public arg: [color]).
+  final Color _color;
+
+  bool get isBoss => variant.isBoss;
+
+  /// Art scale: boss sprite at 4×; grumbler art at the variant's scale
+  /// (grunt 3×, runner 2×, brute 4× — radius/8).
+  int get _artScale => isBoss ? 4 : (variant.radius / 8).round();
+
+  /// Subtle per-enemy tone shift so one variant marching as a squad is not
+  /// visually flat. Deterministic per enemy, never re-rolled per frame.
   late final Color _baseColor = isBoss
-      ? const Color(0xFFB71C1C)
-      : _palette[identityHashCode(this) % _palette.length];
+      ? _color
+      : switch (identityHashCode(this) % 3) {
+          0 => pixelShade(_color, 0.88),
+          1 => _color,
+          _ => pixelLighten(_color, 0.10),
+        };
 
   /// Full sprite palette: hue body shades + shared outline/face colors.
   late final Map<String, Color> _pal = huePalette(_baseColor);
@@ -143,7 +154,7 @@ class Enemy extends CircleComponent with HasGameReference<RepelGame> {
     final sprite = isBoss
         ? (_frame == 0 ? bossA : bossB)
         : (_frame == 0 ? grumblerA : grumblerB);
-    final scale = isBoss ? 4 : 3;
+    final scale = _artScale;
     final sw = sprite.first.length * scale;
     final sh = sprite.length * scale;
 
