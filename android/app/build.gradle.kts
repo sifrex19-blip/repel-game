@@ -46,6 +46,15 @@ android {
             )
         }
     }
+
+    // The pose-detection Flutter plugin depends on BOTH ML Kit model
+    // bundles, but the game only ever runs the base (lite) model
+    // (PoseDetectionModel.base — chosen for real-time performance). The
+    // accurate bundle's only unique payload is the 6.4 MB full landmark
+    // model, which would be dead weight in every install.
+    configurations.all {
+        exclude(group = "com.google.mlkit", module = "pose-detection-accurate")
+    }
 }
 
 kotlin {
