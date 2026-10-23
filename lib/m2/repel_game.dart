@@ -300,9 +300,9 @@ class RepelGame extends FlameGame with TapCallbacks {
       if (wave >= currentLevel.waves) return; // victory already decided
       _startWave(wave + 1);
       _beginFight();
-    } else if (phase != GamePhase.fighting) {
-      return; // menu / victory / defeat: the economy runs only mid-fight
     }
+    // menu / victory / defeat fall through too: pushups pay in EVERY phase
+    // (M7 — the currency promise). Combat below no-ops on an empty field.
 
     // Combo: chain consecutive reps, reset after the upgrade-scaled window.
     final now = DateTime.now();

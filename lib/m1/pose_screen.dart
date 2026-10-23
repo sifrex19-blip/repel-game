@@ -67,6 +67,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   PushupVerdict _verdict = PushupVerdict.noBody;
   double _inferenceFps = 0;
   int _fpsCounter = 0;
+
+  /// Cumulative frames the detector actually processed — the meter diffs
+  /// this per camera frame so dropped frames show up honestly (M10).
+  int _fpsProcessed = 0;
   DateTime _fpsWindow = DateTime.now();
 
   /// Render (UI) FPS sampled once per second from frame timings — shown by
@@ -156,8 +160,11 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
       onPose: _onPose,
     );
 
-    // Rolling inference-FPS meter (updated roughly once per second).
-    _fpsCounter++;
+    // Rolling inference-FPS meter (updated roughly once per second) —
+    // counts frames the detector actually PROCESSED (M10), not every
+    // camera frame handed to us, so dropped frames show honestly here.
+    _fpsCounter += _service.processedFrames - _fpsProcessed;
+    _fpsProcessed = _service.processedFrames;
     final now = DateTime.now();
     final elapsed = now.difference(_fpsWindow).inMilliseconds;
     if (elapsed >= 1000) {
@@ -461,6 +468,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
       _game.pauseEngine();
     } else if (state == AppLifecycleState.resumed) {
       _readOrientation();
+      // A bad-pose streak pending from before the pause must not fire on
+      // the very first frame back (it could eat the rep being started) —
+      // the window restarts with fresh evidence.
+      _verdictHold.reset();
       _startStream();
       _game.resumeEngine();
     }
@@ -649,7 +660,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            'PUSHUPS',
+                            'REPS',
                             style: TextStyle(
                               fontFamily: kPixelFont,
                               fontSize: 9,
@@ -765,7 +776,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                           Text(
                             _counter.isCalibrated
                                 ? 'DOWN ${_counter.downAngle!.toStringAsFixed(0)}°'
-                                : 'DO 2 FULL PUSHUPS TO CALIBRATE',
+                                : 'ONE FULL PUSHUP TO CALIBRATE',
                             style: pixelText(
                                 7,
                                 _counter.isCalibrated
