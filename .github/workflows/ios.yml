@@ -3,7 +3,9 @@ name: iOS build (unsigned ipa)
 # Apple only lets you compile iOS apps on macOS, so the .ipa is built on a
 # macOS runner in the cloud instead of your Windows PC.
 #
-# The output is an UNSIGNED ipa (no Apple Developer account needed here).
+# The output is an UNSIGNED ipa (no Apple Developer account needed here):
+# flutter skips the ipa export when codesigning is off, so we zip the
+# archive's Runner.app into the Payload/ layout an ipa is expected to have.
 # To get it onto an actual iPhone you sign it afterwards — the easiest
 # free path is AltStore: it re-signs the ipa with your own Apple ID
 # (installs expire after 7 days and can be refreshed), or you can sign
@@ -13,6 +15,9 @@ on:
   push:
     tags:
       - 'v*'
+
+permissions:
+  contents: write # tag builds attach the ipa to the GitHub release
 
 jobs:
   build-ipa:
@@ -28,11 +33,24 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Build unsigned ipa
+      - name: Build archive (unsigned)
         run: flutter build ipa --release --no-codesign
+
+      - name: Package ipa (Payload zip — signing happens on install)
+        run: |
+          mkdir -p Payload
+          cp -R "build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app" Payload/
+          zip -qry repel-unsigned.ipa Payload
 
       - name: Upload ipa artifact
         uses: actions/upload-artifact@v4
         with:
           name: repel-unsigned-ipa
-          path: build/ios/ipa/*.ipa
+          path: repel-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Attach to GitHub release (tag builds)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" repel-unsigned.ipa --clobber
