@@ -1,6 +1,7 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import '../app_settings.dart';
 import 'levels.dart';
 import 'pixel_art.dart';
 import 'repel_game.dart';
@@ -186,11 +187,19 @@ class Enemy extends CircleComponent with HasGameReference<RepelGame> {
       y: oy.toDouble(),
       scale: scale,
       palette: _pal,
-      tint: dead ? _deathTint() : (_flash > 0 ? kWhite : null),
+      tint: dead ? _deathTint() : (_flash > 0 ? _flashTint() : null),
     );
 
     if (!dead) _renderHud(canvas);
   }
+
+  /// Hit flash tint, per Settings → Hit flash: FULL = white strobe,
+  /// DIM = soft lighten of the body hue, OFF = nothing.
+  Color? _flashTint() => switch (AppSettings.instance.hitFlash) {
+        'FULL' => kWhite,
+        'DIM' => pixelLighten(_baseColor, 0.45),
+        _ => null,
+      };
 
   void _renderHud(Canvas canvas) {
     final canvasHudW = isBoss ? 84.0 : 50.0;

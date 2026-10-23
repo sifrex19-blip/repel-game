@@ -79,7 +79,17 @@ class _PixelButtonState extends State<PixelButton> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: fill,
-            border: Border.all(color: kInk, width: 2),
+            // Top edge catches the light (a 2px bevel); the other three
+            // stay ink — the button reads as a chunky raised pixel block.
+            border: enabled
+                ? Border(
+                    top: BorderSide(
+                        color: pixelLighten(fill, 0.25), width: 2),
+                    left: BorderSide(color: kInk, width: 2),
+                    right: BorderSide(color: kInk, width: 2),
+                    bottom: BorderSide(color: kInk, width: 2),
+                  )
+                : Border.all(color: kInk, width: 2),
             boxShadow: enabled
                 ? const [
                     BoxShadow(
@@ -247,4 +257,69 @@ class _NumberPainter extends CustomPainter {
   @override
   bool shouldRepaint(_NumberPainter old) =>
       old.text != text || old.scale != scale || old.color != color;
+}
+
+/// Two-frame torch flame that ticks on its own clock — menu decoration
+/// that reuses the game's own fire sprite with zero asset bytes.
+class PixelFlame extends StatefulWidget {
+  const PixelFlame({super.key, this.scale = 3});
+
+  final int scale;
+
+  @override
+  State<PixelFlame> createState() => _PixelFlameState();
+}
+
+class _PixelFlameState extends State<PixelFlame>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _t = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1280),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _t.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Irregular frame cadence — mostly alternates with occasional holds,
+    // same trick as the in-game castle flames.
+    return AnimatedBuilder(
+      animation: _t,
+      builder: (context, _) {
+        final bucket = (_t.value * 14).floor();
+        final frame = (bucket ^ (bucket >> 2)) & 1;
+        return CustomPaint(
+          size: Size(
+            5 * widget.scale.toDouble(),
+            7 * widget.scale.toDouble(),
+          ),
+          painter: _FlamePainter(frame == 0 ? flameA : flameB, widget.scale),
+        );
+      },
+    );
+  }
+}
+
+class _FlamePainter extends CustomPainter {
+  const _FlamePainter(this.art, this.scale);
+
+  final List<String> art;
+  final int scale;
+
+  @override
+  void paint(Canvas canvas, Size size) => drawSprite(
+        canvas,
+        art,
+        x: 0,
+        y: 0,
+        scale: scale,
+        palette: flamePalette,
+      );
+
+  @override
+  bool shouldRepaint(_FlamePainter old) => old.art != art;
 }

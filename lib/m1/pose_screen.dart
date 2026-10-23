@@ -11,6 +11,7 @@ import '../m2/game_camera.dart';
 import '../m2/pixel_art.dart';
 import '../m2/pixel_ui.dart';
 import '../m2/level_ui.dart';
+import '../m2/levels.dart';
 import '../m2/repel_game.dart';
 import '../m2/shop_panel.dart';
 import '../settings_panel.dart';
@@ -180,7 +181,9 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
           final reps = _counter.update(angle, _lastPoseAt!);
           if (reps != null) {
             _game.onRep(); // a counted pushup = one shot at the monsters
-            HapticFeedback.mediumImpact(); // feel every rep without looking
+            if (AppSettings.instance.haptics) {
+              HapticFeedback.mediumImpact(); // feel every rep (Settings)
+            }
           }
         }
       } else {
@@ -211,7 +214,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
 
   /// Toolbar SHOP: pauses the engine and holds the shop open mid-run.
   void _openShop() {
-    HapticFeedback.selectionClick();
+    if (AppSettings.instance.haptics) HapticFeedback.selectionClick();
     _game.pauseEngine();
     setState(() => _shopOpen = true);
   }
@@ -300,7 +303,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
         ? kGreen
         : state == 1
             ? kOrange
-            : const Color(0xFF6B6680);
+            : kSlate;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -362,12 +365,12 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
     final down = _counter.downAngle;
     final up = _counter.upAngle;
     final fill = angle == null
-        ? const Color(0xFF6B6680)
+        ? kSlate
         : down != null && angle <= down
             ? kOrange
             : up != null && angle >= up
                 ? kGreen
-                : const Color(0xFF9D97B8);
+                : kLavender;
 
     return Container(
       height: 14,
@@ -576,7 +579,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                         children: [
                           Text(
                             '#${snap.levelId} ${snap.levelName.toUpperCase()}',
-                            style: pixelText(7, kDimText),
+                            style: pixelText(
+                              7,
+                              levelById(snap.levelId).palette.flag,
+                            ),
                           ),
                           const SizedBox(height: 5),
                           AnimatedSwitcher(
@@ -616,13 +622,13 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                             ),
                           ),
                           const SizedBox(height: 3),
-                          const Text(
+                          Text(
                             'PUSHUPS',
                             style: TextStyle(
                               fontFamily: kPixelFont,
                               fontSize: 9,
-                              color: kOrange,
-                              shadows: [
+                              color: levelById(snap.levelId).palette.flag,
+                              shadows: const [
                                 Shadow(
                                     color: kInk,
                                     offset: Offset(1, 1),
@@ -780,7 +786,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                               color: poseAge != null &&
                                       poseAge.inMilliseconds < 1500
                                   ? kGreen
-                                  : const Color(0xFF6B6680),
+                                  : kSlate,
                             ),
                             const SizedBox(width: 7),
                             Text(
@@ -890,7 +896,9 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 18, vertical: 8),
                         onPressed: () {
-                          HapticFeedback.selectionClick();
+                          if (AppSettings.instance.haptics) {
+                            HapticFeedback.selectionClick();
+                          }
                           setState(() {
                             _counter.reset();
                             _showMore = false;
@@ -905,7 +913,9 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 18, vertical: 8),
                         onPressed: () {
-                          HapticFeedback.mediumImpact();
+                          if (AppSettings.instance.haptics) {
+                            HapticFeedback.mediumImpact();
+                          }
                           setState(() {
                             _game.toMenu();
                             _showMore = false;

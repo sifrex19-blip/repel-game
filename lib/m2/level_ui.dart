@@ -163,6 +163,13 @@ class _LevelCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Biome strip — each card wears its level's flag hue, so the
+              // eight cards read as eight worlds at a glance.
+              Container(
+                height: 5,
+                margin: const EdgeInsets.only(bottom: 7),
+                color: unlocked ? level.palette.flag : kLocked,
+              ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -170,7 +177,7 @@ class _LevelCard extends StatelessWidget {
                     '${level.id}',
                     style: pixelText(
                       16,
-                      unlocked ? kWhite : const Color(0xFF5A5470),
+                      unlocked ? kWhite : kLocked,
                       shadow: 2,
                     ),
                   ),
@@ -204,7 +211,7 @@ class _LevelCard extends StatelessWidget {
                 style: pixelText(
                   7,
                   !unlocked
-                      ? const Color(0xFF5A5470)
+                      ? kLocked
                       : cleared
                           ? kGold
                           : kDimText,
@@ -222,57 +229,81 @@ class _LevelCard extends StatelessWidget {
 }
 
 /// Victory screen (phase == victory): the level's first-clear bonus lands
-/// here exactly once, with continue / replay / menu choices.
-class VictoryPanel extends StatelessWidget {
+/// here exactly once, with continue / replay / menu choices — plus a
+/// falling coin-and-star confetti behind the panel.
+class VictoryPanel extends StatefulWidget {
   const VictoryPanel({super.key, required this.game});
 
   final RepelGame game;
 
   @override
+  State<VictoryPanel> createState() => _VictoryPanelState();
+}
+
+class _VictoryPanelState extends State<VictoryPanel>
+    with SingleTickerProviderStateMixin {
+  /// Confetti clock — runs only while the victory panel is visible.
+  late final AnimationController _t = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 4),
+  );
+
+  @override
+  void dispose() {
+    _t.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<GameSnapshot>(
-      valueListenable: game.snapshot,
+      valueListenable: widget.game.snapshot,
       builder: (context, snap, _) {
-        if (snap.phase != GamePhase.victory) return const SizedBox.shrink();
+        final visible = snap.phase == GamePhase.victory;
+        if (visible && !_t.isAnimating) _t.repeat();
+        if (!visible && _t.isAnimating) _t.stop();
+        if (!visible) return const SizedBox.shrink();
 
         final isLast = snap.levelId >= kLevels.length;
         final maxH = MediaQuery.sizeOf(context).height - 24;
-        return Container(
-          color: const Color(0x730D0B14), // translucent: camera stays visible
-          alignment: Alignment.center,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: 460, maxHeight: maxH),
-            child: Container(
-              margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.all(3),
-              color: kInk,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: kPanelBg,
-                  border: pixelBevel(2),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'LEVEL ${snap.levelId} CLEARED',
-                      style: pixelText(16, kGold, shadow: 2),
-                      textAlign: TextAlign.center,
+        return Stack(
+          children: [
+            Container(
+              color: const Color(0x730D0B14), // translucent: camera stays visible
+              alignment: Alignment.center,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: 460, maxHeight: maxH),
+                child: Container(
+                  margin: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(3),
+                  color: kInk,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: kPanelBg,
+                      border: pixelBevel(2),
                     ),
-                    const SizedBox(height: 8),
-                    Text(snap.levelName, style: pixelText(10, kWhite)),
-                    const SizedBox(height: 12),
-                    // Reward line — first clear pays out, replays don't.
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: kPanelFace,
-                        border: pixelBevel(1),
-                      ),
-                      child: Column(
-                        children: [
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'LEVEL ${snap.levelId} CLEARED',
+                          style: pixelText(16, kGold, shadow: 2),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(snap.levelName, style: pixelText(10, kWhite)),
+                        const SizedBox(height: 12),
+                        // Reward line — first clear pays out, replays don't.
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: kPanelFace,
+                            border: pixelBevel(1),
+                          ),
+                          child: Column(
+                            children: [
                           if (snap.victoryBonus > 0)
                             Text(
                               '+${snap.victoryBonus} COINS — FIRST CLEAR!',
@@ -306,7 +337,7 @@ class VictoryPanel extends StatelessWidget {
                             ? null
                             : () {
                                 HapticFeedback.mediumImpact();
-                                game.startLevel(snap.levelId + 1);
+                                widget.game.startLevel(snap.levelId + 1);
                               },
                         label: Text(
                           isLast ? 'CAMPAIGN COMPLETE!' : 'NEXT LEVEL',
@@ -324,7 +355,7 @@ class VictoryPanel extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(vertical: 9),
                             onPressed: () {
                               HapticFeedback.selectionClick();
-                              game.startLevel(snap.levelId);
+                              widget.game.startLevel(snap.levelId);
                             },
                             label: Text('REPLAY',
                                 style: pixelText(9, kWhite)),
@@ -337,7 +368,7 @@ class VictoryPanel extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(vertical: 9),
                             onPressed: () {
                               HapticFeedback.selectionClick();
-                              game.toMenu();
+                              widget.game.toMenu();
                             },
                             label: Text('LEVEL SELECT',
                                 style: pixelText(9, kWhite)),
@@ -350,8 +381,70 @@ class VictoryPanel extends StatelessWidget {
               ),
             ),
           ),
-        );
-      },
-    );
+          ),
+          // Coin-and-star confetti raining over the celebration.
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _t,
+                builder: (context, _) => CustomPaint(
+                  painter: _CoinRainPainter(_t.value),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
   }
+}
+
+/// Falling coins and stars behind the victory panel — deterministic
+/// positions, quantized alpha steps, sprite pictures cached by the
+/// shared renderer.
+class _CoinRainPainter extends CustomPainter {
+  const _CoinRainPainter(this.t);
+
+  final double t;
+
+  static int _hash(int v) {
+    var h = v & 0x7fffffff;
+    h ^= h >> 13;
+    h *= 0x5bd1e995;
+    h ^= h >> 15;
+    return h & 0x7fffffff;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 24 || size.height <= 24) return;
+    for (var i = 0; i < 12; i++) {
+      final h = _hash(i * 71 + 13);
+      final phase = (h % 100) / 100;
+      final progress = (t + phase) % 1;
+      final x = ((h ~/ 3) % (size.width - 24).floor()).toDouble();
+      final y = -24.0 + progress * (size.height + 48);
+      // Quantized fade: in at the top, out at the bottom (3 hard steps).
+      final fade = progress < 0.12
+          ? progress / 0.12
+          : progress > 0.82
+              ? (1 - progress) / 0.18
+              : 1.0;
+      final alpha = ((fade.clamp(0.0, 1.0) * 3).floor() / 3) * 0.9;
+      final star = h % 3 == 0;
+      drawSprite(
+        canvas,
+        star ? starIcon : coinSprite,
+        x: x,
+        y: y,
+        scale: 2,
+        palette: star ? iconPalette(kGold) : coinPalette,
+        tint: kGold.withValues(alpha: alpha),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CoinRainPainter old) => old.t != t;
 }

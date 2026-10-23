@@ -13,6 +13,10 @@ void main() {
     'coin': coinSprite,
     'flameA': flameA,
     'flameB': flameB,
+    'fistIcon': fistIcon,
+    'bootIcon': bootIcon,
+    'shieldIcon': shieldIcon,
+    'starIcon': starIcon,
   };
 
   group('sprites', () {
@@ -38,6 +42,10 @@ void main() {
       expect(coinSprite.length, 7);
       expect(coinSprite.first.length, 7);
       expect(flameA.length, flameB.length);
+      for (final icon in [fistIcon, bootIcon, shieldIcon, starIcon]) {
+        expect(icon.length, 8, reason: 'icon height');
+        expect(icon.first.length, 9, reason: 'icon width');
+      }
     });
 
     test('walk frames differ (animation actually changes pixels)', () {
@@ -83,6 +91,42 @@ void main() {
       expect(p['c'], const Color(0xFFFF5252));
       expect(p['d']!.r, lessThan(0xFF));
       expect(p['o'], kOutline);
+    });
+  });
+
+  group('palette (M5.3)', () {
+    test('accent swatches are unique colors and include the ORANGE fallback',
+        () {
+      final seen = <Color>{};
+      for (final e in kAccents.entries) {
+        expect(
+          seen.add(e.value),
+          isTrue,
+          reason: 'accent ${e.key} duplicates another hue',
+        );
+      }
+      expect(kAccents.containsKey('ORANGE'), isTrue,
+          reason: 'ORANGE is the persisted fallback accent');
+    });
+
+    test('iconPalette covers every character the upgrade icons use', () {
+      final pal = iconPalette(kTeal);
+      expect(pal.keys, containsAll(['o', 'm', 'l', 'd', 'w']));
+      for (final icon in [fistIcon, bootIcon, shieldIcon, starIcon]) {
+        for (final row in icon) {
+          for (final ch in row.split('')) {
+            if (ch == '.') continue; // transparent — never touches the palette
+            expect(
+              pal.containsKey(ch),
+              isTrue,
+              reason: 'icon character "$ch" has no palette entry',
+            );
+          }
+        }
+      }
+      // Light and dark shades sit either side of the accent hue.
+      expect(pal['l']!.r, greaterThan(kTeal.r));
+      expect(pal['d']!.r, lessThan(kTeal.r));
     });
   });
 

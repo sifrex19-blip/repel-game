@@ -31,7 +31,41 @@ const kOrangeDark = Color(0xFFB34A1F);
 const kRed = Color(0xFFD64550); // danger
 const kRedDark = Color(0xFF8E2733);
 const kBlue = Color(0xFF4FC3F7); // auto-attack tracers
+const kBlueDark = Color(0xFF2F7FBF);
 const kGreen = Color(0xFF6FBF73);
+const kGreenDark = Color(0xFF3F7A46);
+
+// ---------------------------------------------------------------------------
+// M5.3 — extended ramp: more hues for icons, themes and world detail.
+// ---------------------------------------------------------------------------
+const kTeal = Color(0xFF3FD2C7); // fresh accent (theme, speed upgrade)
+const kTealLight = Color(0xFF8CEEE4);
+const kPurple = Color(0xFF9D6BF2); // arcane accent (theme)
+const kPurpleLight = Color(0xFFC9B4FF);
+const kPink = Color(0xFFE86A9D); // magenta pop (blossoms, theme)
+const kAmber = Color(0xFFFFA03D); // warm watch-light, hot embers
+const kLime = Color(0xFFA9D94A); // acid green (theme)
+const kSteel = Color(0xFF6E7A9C); // cool slate UI
+const kSteelLight = Color(0xFF9DA9C7);
+
+// UI neutral ramp — the raw hex values that used to be scattered across
+// the HUD, single-sourced here.
+const kPip = Color(0xFF3A3352); // empty pip / inactive fill
+const kLocked = Color(0xFF5A5470); // locked card text
+const kSlate = Color(0xFF6B6680); // meters idle
+const kLavender = Color(0xFF9D97B8); // meters mid
+
+/// UI accent themes (Settings → ACCENT): display name → color. Buttons,
+/// the PUSHUPS label and menu tagline tint with the chosen one; the
+/// default stays the original brand orange.
+const kAccents = <String, Color>{
+  'ORANGE': kOrange,
+  'GOLD': kGold,
+  'TEAL': kTeal,
+  'VIOLET': kPurple,
+  'MAGENTA': kPink,
+  'LIME': kLime,
+};
 
 /// Multiply toward black (shade a base color).
 Color pixelShade(Color c, double f) {
@@ -195,6 +229,68 @@ const flamePalette = <String, Color>{
   'd': Color(0xFFD84315),
   'w': Color(0xFFFFF8E1),
 };
+
+// ---------------------------------------------------------------------------
+// Upgrade icons — 9px-wide badges for the shop cards, one per upgrade.
+// Drawn with [iconPalette] over the upgrade's accent hue.
+// ---------------------------------------------------------------------------
+
+/// Power — a clenched fist (knuckle glints on top).
+const fistIcon = <String>[
+  '..ooooo..',
+  '.ommmmmo.',
+  'omwmwmwmo',
+  'ommmmmmmo',
+  'omlmmmlmo',
+  'ommmmmmmo',
+  '.odddddo.',
+  '..ooooo..',
+];
+
+/// Speed — a boot mid-stride, toe pointing right.
+const bootIcon = <String>[
+  '..oooo...',
+  '.ommmo...',
+  '.ommmo...',
+  '.ommmo...',
+  '.ommmoooo',
+  'oommmmmmo',
+  'odddddddo',
+  '.ooooooo.',
+];
+
+/// Fortress — a kite shield with a bright emblem.
+const shieldIcon = <String>[
+  '.ooooooo.',
+  'olllllllo',
+  'ommmmmmmo',
+  'omlwwwlmo',
+  '.ommmmmo.',
+  '..ommmo..',
+  '...omo...',
+  '....o....',
+];
+
+/// Combo — a five-point star.
+const starIcon = <String>[
+  '....o....',
+  '...olo...',
+  '...olo...',
+  'ooooooooo',
+  '.olllllo.',
+  '..olllo..',
+  '.olo.olo.',
+  'o.......o',
+];
+
+/// Palette for the icon family: outline + three shades of one accent hue.
+Map<String, Color> iconPalette(Color base) => {
+      'o': kOutline,
+      'm': base,
+      'l': pixelLighten(base, 0.35),
+      'd': pixelShade(base, 0.55),
+      'w': kWhite,
+    };
 
 // ---------------------------------------------------------------------------
 // 3×5 pixel digit font (used for all in-world numbers: damage, coins).

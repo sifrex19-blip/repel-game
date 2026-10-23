@@ -1,5 +1,9 @@
+import 'dart:ui' show Color;
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'm2/pixel_art.dart';
 
 /// App-level preferences that are NOT gameplay progress (the campaign save
 /// lives in [PlayerSave], economy.dart). One process-wide instance: the home
@@ -14,24 +18,100 @@ class AppSettings extends ChangeNotifier {
   /// hide it.
   bool debugOverlay = true;
 
+  /// UI accent theme — one of [kAccents]' keys. Buttons, the PUSHUPS
+  /// label and the menu tagline tint with it.
+  String accentName = 'ORANGE';
+  Color get accent => kAccents[accentName] ?? kOrange;
+
+  /// Screen shake on impacts (photosensitivity-friendly off switch).
+  bool screenShake = true;
+
+  /// Enemy/base hit flash: FULL = white strobe (classic), DIM = soft
+  /// lighten of the body hue, OFF = no flash at all.
+  static const flashModes = ['FULL', 'DIM', 'OFF'];
+  String hitFlash = 'FULL';
+
+  /// Impact sparks, death poofs and drifting embers.
+  bool particles = true;
+
+  /// Vibration feedback on reps and button presses.
+  bool haptics = true;
+
   static const _kDebugOverlay = 'dbg_overlay';
+  static const _kAccent = 'accent';
+  static const _kShake = 'shake';
+  static const _kFlash = 'flash';
+  static const _kParticles = 'particles';
+  static const _kHaptics = 'haptics';
 
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      debugOverlay = prefs.getBool(_kDebugOverlay) ?? debugOverlay;
+      // Resolve against defaults — never trust raw stored values, and never
+      // inherit stale state (load() must be idempotent on the singleton).
+      debugOverlay = prefs.getBool(_kDebugOverlay) ?? true;
+      final accent = prefs.getString(_kAccent);
+      accentName = accent != null && kAccents.containsKey(accent)
+          ? accent
+          : 'ORANGE';
+      screenShake = prefs.getBool(_kShake) ?? true;
+      final flash = prefs.getString(_kFlash);
+      hitFlash =
+          flash != null && flashModes.contains(flash) ? flash : 'FULL';
+      particles = prefs.getBool(_kParticles) ?? true;
+      haptics = prefs.getBool(_kHaptics) ?? true;
     } catch (_) {
       // Unreadable storage: keep defaults rather than crash the app.
     }
   }
 
-  Future<void> setDebugOverlay(bool value) async {
-    if (value == debugOverlay) return;
-    debugOverlay = value;
-    notifyListeners();
+  Future<void> _persist() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_kDebugOverlay, value);
+      await prefs.setBool(_kDebugOverlay, debugOverlay);
+      await prefs.setString(_kAccent, accentName);
+      await prefs.setBool(_kShake, screenShake);
+      await prefs.setString(_kFlash, hitFlash);
+      await prefs.setBool(_kParticles, particles);
+      await prefs.setBool(_kHaptics, haptics);
     } catch (_) {}
+  }
+
+  Future<void> _set(void Function() apply) async {
+    apply();
+    notifyListeners();
+    await _persist();
+  }
+
+  Future<void> setDebugOverlay(bool value) {
+    if (value == debugOverlay) return Future.value();
+    return _set(() => debugOverlay = value);
+  }
+
+  Future<void> setAccent(String name) {
+    if (!kAccents.containsKey(name) || name == accentName) {
+      return Future.value();
+    }
+    return _set(() => accentName = name);
+  }
+
+  Future<void> setScreenShake(bool value) {
+    if (value == screenShake) return Future.value();
+    return _set(() => screenShake = value);
+  }
+
+  Future<void> setHitFlash(String mode) {
+    if (!flashModes.contains(mode) || mode == hitFlash) return Future.value();
+    return _set(() => hitFlash = mode);
+  }
+
+  Future<void> setParticles(bool value) {
+    if (value == particles) return Future.value();
+    return _set(() => particles = value);
+  }
+
+  Future<void> setHaptics(bool value) {
+    if (value == haptics) return Future.value();
+    return _set(() => haptics = value);
   }
 }

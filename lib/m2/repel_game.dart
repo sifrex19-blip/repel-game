@@ -6,6 +6,7 @@ import 'package:flame/events.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 
+import '../app_settings.dart';
 import 'economy.dart';
 import 'enemy.dart';
 import 'game_camera.dart';
@@ -356,6 +357,7 @@ class RepelGame extends FlameGame with TapCallbacks {
 
   /// Chunky impact sparks in the pixel palette (event-driven, self-removing).
   void spawnSparks(Vector2 pos, Color color, {int count = 5, double spread = 120}) {
+    if (!AppSettings.instance.particles) return; // Settings → Particles off
     if (children.length > 320) return; // hard cap keeps spikes bounded
     final light = pixelLighten(color, 0.5);
     for (var i = 0; i < count; i++) {
@@ -374,6 +376,7 @@ class RepelGame extends FlameGame with TapCallbacks {
 
   /// Death poof: a ring of body-colored squares that pops and settles.
   void spawnPoof(Vector2 pos, Color color) {
+    if (!AppSettings.instance.particles) return;
     if (children.length > 320) return;
     final light = pixelLighten(color, 0.45);
     for (var i = 0; i < 9; i++) {
@@ -458,7 +461,10 @@ class RepelGame extends FlameGame with TapCallbacks {
 
     // Ambient: a stray ember drifts up off a torch now and then.
     _emberT -= step;
-    if (_emberT <= 0 && phase != GamePhase.menu && children.length < 320) {
+    if (_emberT <= 0 &&
+        phase != GamePhase.menu &&
+        AppSettings.instance.particles &&
+        children.length < 320) {
       _emberT = 0.55 + _rng.nextDouble() * 0.7;
       final left = _rng.nextBool();
       add(PixelParticle(
@@ -600,9 +606,10 @@ class RepelGame extends FlameGame with TapCallbacks {
   @override
   void render(Canvas canvas) {
     // Short, integer-pixel screen shake — applied to the world transform
-    // only; the HUD below renders outside it and stays put.
+    // only; the HUD below renders outside it and stays put. Gated by
+    // Settings → Screen shake.
     var sx = 0.0, sy = 0.0;
-    if (_shake > 0) {
+    if (_shake > 0 && AppSettings.instance.screenShake) {
       sx = ((_rng.nextDouble() * 2 - 1) * _shake).roundToDouble();
       sy = ((_rng.nextDouble() * 2 - 1) * _shake).roundToDouble();
     }
@@ -613,6 +620,7 @@ class RepelGame extends FlameGame with TapCallbacks {
     // maps world pixels to the screen, it never moves or follows).
     cam.beginWorld(canvas);
     if (_bgPic != null) canvas.drawPicture(_bgPic!);
+    _renderTwinkle(canvas);
     if (_groundPic != null) canvas.drawPicture(_groundPic!);
     super.render(canvas); // enemies, tracers, particles, numbers
     if (_lipPic != null) canvas.drawPicture(_lipPic!); // grass in front of feet
@@ -627,7 +635,7 @@ class RepelGame extends FlameGame with TapCallbacks {
     _renderBanners(canvas);
   }
 
-  // -- background: atmosphere wash + hills + moon (built per level) ---------
+  // -- background: atmosphere wash + stars + hills + moon (built per level) --
 
   ui.Picture _buildBackground(double w, LevelPalette pal) {
     final rec = ui.PictureRecorder();
@@ -637,6 +645,18 @@ class RepelGame extends FlameGame with TapCallbacks {
     // Atmosphere wash over the whole world (camera ghosts through).
     p.color = pal.wash;
     c.drawRect(Rect.fromLTWH(0, 0, w, ArenaCamera.virtualHeight), p);
+
+    // Star field — deterministic dots above the hills; every biome reads
+    // as dusk/night, so the sky always has depth.
+    for (var i = 0; i < 34; i++) {
+      final h = _hash(i * 97 + 31);
+      final sx = (h % (w - 12).floor()).floorToDouble() + 6;
+      final sy = 10 + (h ~/ 7) % (groundY - 140).clamp(40, 150);
+      final bright = h % 5 == 0;
+      p.color = kWhite.withValues(alpha: bright ? 0.85 : 0.30 + (h % 3) * 0.15);
+      final s = bright ? 2.0 : 1.0;
+      c.drawRect(Rect.fromLTWH(sx, sy.toDouble(), s, s), p);
+    }
 
     // Moon/sun: flag-tinted pixel disc, fixed spot, 2-frame-free.
     final mx = (w * 0.62).floorToDouble();
@@ -661,6 +681,21 @@ class RepelGame extends FlameGame with TapCallbacks {
     return rec.endRecording();
   }
 
+  /// A handful of bright stars blink in whole frames (no fades) — the sky
+  /// reads alive without any per-frame allocation.
+  void _renderTwinkle(Canvas canvas) {
+    final w = cam.worldWidth;
+    final p = Paint()..isAntiAlias = false;
+    final flip = (_time * 2).floor() & 1;
+    for (var i = 0; i < 5; i++) {
+      final on = ((flip + i) & 1) == 0;
+      p.color = kWhite.withValues(alpha: on ? 0.9 : 0.25);
+      final sx = w * (0.12 + 0.19 * i);
+      final sy = 16.0 + (i * 43) % 80;
+      canvas.drawRect(Rect.fromLTWH(sx.roundToDouble(), sy, 2, 2), p);
+    }
+  }
+
   // -- ground (built once per size + level) --------------------------------
 
   ui.Picture _buildGround(double w, LevelPalette pal) {
@@ -678,7 +713,8 @@ class RepelGame extends FlameGame with TapCallbacks {
     p.color = pal.soil;
     c.drawRect(Rect.fromLTWH(0, soilY, w, bandH - soilY), p);
 
-    // Deterministic hand-scattered texture: pebbles, tufts of moss, cracks.
+    // Deterministic hand-scattered texture: pebbles, tufts of moss, cracks,
+    // and little blossoms (stem + 2px head in the biome's flag hue).
     for (var gx = 0; gx < w + 12; gx += 12) {
       final h = _hash(gx * 7 + 11);
       if (h % 5 <= 1) {
@@ -697,6 +733,18 @@ class RepelGame extends FlameGame with TapCallbacks {
         final cx = (gx + h % 5).toDouble();
         p.color = pal.crack;
         c.drawRect(Rect.fromLTWH(cx, soilY + 4, 2, 26), p);
+      } else if (h % 13 == 5) {
+        // Blossom: 1px stem, 3px head — flag hue, pink or warm white.
+        final fx = (gx + h % 7).toDouble();
+        final fy = (3 + (h ~/ 9) % 30).toDouble();
+        p.color = pal.lipDark;
+        c.drawRect(Rect.fromLTWH(fx, fy + 2, 1, 5), p);
+        p.color = h % 26 == 5
+            ? pal.flag
+            : h % 39 == 5
+                ? kPink
+                : kWhite;
+        c.drawRect(Rect.fromLTWH(fx - 1, fy, 3, 2), p);
       }
     }
     return rec.endRecording();
@@ -774,6 +822,28 @@ class RepelGame extends FlameGame with TapCallbacks {
         }
       }
     }
+
+    // Weathering: moss clings to the mortar lines, and a watch light burns
+    // behind an arrow slit — the castle feels inhabited.
+    for (var i = 0; i < 9; i++) {
+      final h = _hash(i * 53 + 29);
+      final mx = (2 + h % (w - 8)).toDouble();
+      final my = (bodyTop + 8 + (h ~/ 5) % (bodyBottom - bodyTop - 20)).toDouble();
+      p.color = tone(pal.moss);
+      c.drawRect(Rect.fromLTWH(mx, my, 3, 2), p);
+      if (h % 3 == 0) {
+        p.color = tone(pal.pebble);
+        c.drawRect(Rect.fromLTWH(mx + 1, my - 2, 1, 2), p);
+      }
+    }
+
+    // Arrow slit with a warm watch light behind it (upper right of body).
+    p.color = tone(outline);
+    c.drawRect(Rect.fromLTWH(44, 24, 6, 13), p);
+    p.color = tone(kAmber);
+    c.drawRect(Rect.fromLTWH(45, 25, 4, 11), p);
+    p.color = tone(pixelShade(kAmber, 0.55));
+    c.drawRect(Rect.fromLTWH(47, 27, 2, 7), p); // slit shadow down the middle
 
     // Merlons.
     for (var i = 0; i < 3; i++) {

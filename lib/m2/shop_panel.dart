@@ -31,6 +31,23 @@ class ShopPanel extends StatelessWidget {
   /// Closes the forced shop (toolbar path); unused in normal flow.
   final VoidCallback? onClose;
 
+  /// Per-upgrade identity hue — card outline, icon, pips and BUY button
+  /// all wear it, so the four upgrades are told apart at a glance.
+  static Color accentOf(UpgradeType t) => switch (t) {
+        UpgradeType.power => kRed,
+        UpgradeType.speed => kTeal,
+        UpgradeType.fortress => kGreen,
+        UpgradeType.combo => kGold,
+      };
+
+  /// Hand-authored 9px icon for the card header (pixel_art.dart).
+  static List<String> iconOf(UpgradeType t) => switch (t) {
+        UpgradeType.power => fistIcon,
+        UpgradeType.speed => bootIcon,
+        UpgradeType.fortress => shieldIcon,
+        UpgradeType.combo => starIcon,
+      };
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<GameSnapshot>(
@@ -221,9 +238,7 @@ class _Header extends StatelessWidget {
                               width: 9,
                               height: 9,
                               margin: EdgeInsets.only(right: i < 9 ? 2 : 0),
-                              color: i < rest
-                                  ? kOrange
-                                  : const Color(0xFF3A3352),
+                              color: i < rest ? kOrange : kPip,
                             ),
                           const SizedBox(width: 8),
                           Text('${snap.restSeconds}', style: pixelText(9, kWhite)),
@@ -315,13 +330,14 @@ class _UpgradeCardState extends State<_UpgradeCard> {
     final affordable = cost != null && widget.snap.coins >= cost;
     final maxLv = upgradeMaxLevel(widget.type);
     final paid = _lastPaid;
+    final accent = ShopPanel.accentOf(widget.type);
 
     return Stack(
       clipBehavior: Clip.none,
       children: [
         Container(
           padding: const EdgeInsets.all(2), // accent outline when affordable
-          color: affordable ? kOrange : kPanelDark,
+          color: affordable ? accent : kPanelDark,
           child: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -332,9 +348,22 @@ class _UpgradeCardState extends State<_UpgradeCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  upgradeName(widget.type),
-                  style: pixelText(10, affordable ? kWhite : kDimText),
+                Row(
+                  children: [
+                    PixelSprite(
+                      ShopPanel.iconOf(widget.type),
+                      scale: 2,
+                      palette: iconPalette(accent),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        upgradeName(widget.type),
+                        style:
+                            pixelText(10, affordable ? kWhite : kDimText),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 6),
                 // Level pips on an ink backing — instant level read.
@@ -350,9 +379,7 @@ class _UpgradeCardState extends State<_UpgradeCard> {
                           height: 5,
                           margin:
                               EdgeInsets.only(right: i < maxLv - 1 ? 2 : 0),
-                          color: i < level
-                              ? kGold
-                              : const Color(0xFF3A3352),
+                          color: i < level ? accent : kPip,
                         ),
                     ],
                   ),
@@ -372,7 +399,7 @@ class _UpgradeCardState extends State<_UpgradeCard> {
                 SizedBox(
                   width: double.infinity,
                   child: PixelButton(
-                    fill: kOrange,
+                    fill: accent,
                     padding: const EdgeInsets.symmetric(vertical: 7),
                     onPressed: (cost == null || !affordable)
                         ? null
