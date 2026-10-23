@@ -221,4 +221,47 @@ void main() {
       expect(c.isCalibrated, isFalse);
     });
   });
+
+  group('combineArmAngles (M6 arm fusion)', () {
+    test('no readings → null; one reading passes through', () {
+      expect(combineArmAngles([]), isNull);
+      expect(combineArmAngles([const ArmReading(123, 0.9)]), 123);
+    });
+
+    test('agreeing arms → confidence-weighted mean', () {
+      final a = combineArmAngles([
+        const ArmReading(100, 0.9),
+        const ArmReading(110, 0.5),
+      ]);
+      // (100·0.9 + 110·0.5) / 1.4 ≈ 103.57 — the shaky arm contributes,
+      // but the confident one pulls harder than a plain average would.
+      expect(a, closeTo(103.57, 0.01));
+    });
+
+    test('wildly disagreeing arms trust the more confident one', () {
+      // A mis-tracked wrist flips one arm's angle 60° away (the classic
+      // mid-rep joint swap). Averaging that with the good arm would drag
+      // the smoothed angle across a threshold — the outlier must lose.
+      final a = combineArmAngles([
+        const ArmReading(150, 0.9),
+        const ArmReading(90, 0.45),
+      ]);
+      expect(a, 150);
+      // …and mirrored: the confident arm still wins from either slot.
+      final b = combineArmAngles([
+        const ArmReading(90, 0.4),
+        const ArmReading(155, 0.8),
+      ]);
+      expect(b, 155);
+    });
+
+    test('a gap exactly at maxGap still averages', () {
+      final a = combineArmAngles([
+        const ArmReading(100, 0.9),
+        const ArmReading(135, 0.5),
+      ], maxGap: 35);
+      // 35 is not > 35 → no outlier, weighted mean applies.
+      expect(a, closeTo((100 * 0.9 + 135 * 0.5) / 1.4, 0.01));
+    });
+  });
 }

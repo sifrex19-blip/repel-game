@@ -160,7 +160,7 @@ class _HomeMenu extends StatelessWidget {
             alignment: Alignment.bottomCenter,
             child: Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: Text('REPEL v0.1-m5.3', style: pixelText(7, kDimText)),
+              child: Text('REPEL v0.1-m6', style: pixelText(7, kDimText)),
             ),
           ),
         ),

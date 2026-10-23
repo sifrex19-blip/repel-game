@@ -15,6 +15,7 @@ void main() {
         'particles': false,
         'haptics': false,
         'dbg_overlay': false,
+        'sens': 'FORGIVING',
       });
       final s = AppSettings.instance;
       await s.load();
@@ -24,17 +25,20 @@ void main() {
       expect(s.particles, isFalse);
       expect(s.haptics, isFalse);
       expect(s.debugOverlay, isFalse);
+      expect(s.repSensitivity, 'FORGIVING');
     });
 
     test('unknown accent and flash mode fall back to defaults', () async {
       SharedPreferences.setMockInitialValues({
         'accent': 'PLAID',
         'flash': 'STROBE',
+        'sens': 'PSYCHO',
       });
       final s = AppSettings.instance;
       await s.load();
       expect(s.accentName, 'ORANGE');
       expect(s.hitFlash, 'FULL');
+      expect(s.repSensitivity, 'NORMAL');
     });
 
     test('setters persist through SharedPreferences', () async {
@@ -45,12 +49,25 @@ void main() {
       await s.setScreenShake(false);
       await s.setHitFlash('OFF');
       await s.setHaptics(false);
+      await s.setRepSensitivity('STRICT');
 
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('accent'), 'TEAL');
       expect(prefs.getBool('shake'), isFalse);
       expect(prefs.getString('flash'), 'OFF');
       expect(prefs.getBool('haptics'), isFalse);
+      expect(prefs.getString('sens'), 'STRICT');
+    });
+
+    test('gate hold windows scale with the chosen sensitivity', () async {
+      SharedPreferences.setMockInitialValues({});
+      final s = AppSettings.instance;
+      await s.load();
+      expect(s.gateHold.inMilliseconds, 300); // NORMAL default
+      await s.setRepSensitivity('STRICT');
+      expect(s.gateHold.inMilliseconds, 150);
+      await s.setRepSensitivity('FORGIVING');
+      expect(s.gateHold.inMilliseconds, 600);
     });
 
     test('setAccent rejects unknown names', () async {

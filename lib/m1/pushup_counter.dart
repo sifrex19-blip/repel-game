@@ -171,3 +171,42 @@ double computeAngle({
   final cos = (abx * cbx + aby * cby) / mag;
   return acos(cos.clamp(-1.0, 1.0)) * 180 / pi;
 }
+
+/// One arm's elbow-angle reading with its detector confidence (the min
+/// likelihood across shoulder/elbow/wrist that produced the angle).
+class ArmReading {
+  const ArmReading(this.angle, this.confidence);
+
+  final double angle;
+  final double confidence;
+}
+
+/// Fuses the per-arm readings into the single angle the counter sees
+/// (M6 hardening).
+///
+/// Normally a confidence-weighted mean — the shaky arm still contributes,
+/// just less. But when the arms disagree by more than [maxGap] degrees at
+/// least one reading is mis-tracked (a wrist swapping to the wrong joint
+/// mid-rep is the classic case, often at likelihood 0.4): averaging that
+/// into the good arm poisons the smoothed angle and drags it across a
+/// threshold, so the more confident arm wins outright instead.
+double? combineArmAngles(List<ArmReading> arms, {double maxGap = 35}) {
+  if (arms.isEmpty) return null;
+  if (arms.length == 1) return arms.first.angle;
+
+  var best = arms.first;
+  var worst = arms.first;
+  for (final a in arms) {
+    if (a.confidence > best.confidence) best = a;
+    if (a.confidence < worst.confidence) worst = a;
+  }
+  if ((best.angle - worst.angle).abs() > maxGap) return best.angle;
+
+  var sum = 0.0;
+  var weights = 0.0;
+  for (final a in arms) {
+    sum += a.angle * a.confidence;
+    weights += a.confidence;
+  }
+  return weights > 0 ? sum / weights : arms.first.angle;
+}

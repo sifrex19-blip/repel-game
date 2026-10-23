@@ -159,6 +159,28 @@ class SettingsPanel extends StatelessWidget {
                                 settings.setHaptics(!settings.haptics),
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        _RowCard(
+                          title: 'REP SENSITIVITY',
+                          hint: 'How long a bad pose pauses counting — '
+                              'FORGIVING if real reps get dropped',
+                          trailing: _CycleButton(
+                            values: AppSettings.repSensitivityModes,
+                            value: settings.repSensitivity,
+                            colorOf: (v) => switch (v) {
+                              'STRICT' => kRed,
+                              'NORMAL' => kGreen,
+                              _ => kGold,
+                            },
+                            onTap: () {
+                              final i = AppSettings.repSensitivityModes
+                                  .indexOf(settings.repSensitivity);
+                              settings.setRepSensitivity(AppSettings
+                                  .repSensitivityModes[(i + 1) %
+                                      AppSettings.repSensitivityModes.length]);
+                            },
+                          ),
+                        ),
                         const SizedBox(height: 10),
 
                         // ---- debug --------------------------------------

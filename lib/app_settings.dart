@@ -37,12 +37,26 @@ class AppSettings extends ChangeNotifier {
   /// Vibration feedback on reps and button presses.
   bool haptics = true;
 
+  /// How long a bad pose must persist before rep counting pauses
+  /// (Settings → REP SENSITIVITY). STRICT reacts fastest, FORGIVING
+  /// rides out detector flicker on tricky lighting/angles.
+  static const repSensitivityModes = ['STRICT', 'NORMAL', 'FORGIVING'];
+  String repSensitivity = 'NORMAL';
+
+  /// The hold window the pose gate applies for the chosen sensitivity.
+  Duration get gateHold => switch (repSensitivity) {
+        'STRICT' => const Duration(milliseconds: 150),
+        'FORGIVING' => const Duration(milliseconds: 600),
+        _ => const Duration(milliseconds: 300),
+      };
+
   static const _kDebugOverlay = 'dbg_overlay';
   static const _kAccent = 'accent';
   static const _kShake = 'shake';
   static const _kFlash = 'flash';
   static const _kParticles = 'particles';
   static const _kHaptics = 'haptics';
+  static const _kSens = 'sens';
 
   Future<void> load() async {
     try {
@@ -60,6 +74,9 @@ class AppSettings extends ChangeNotifier {
           flash != null && flashModes.contains(flash) ? flash : 'FULL';
       particles = prefs.getBool(_kParticles) ?? true;
       haptics = prefs.getBool(_kHaptics) ?? true;
+      final sens = prefs.getString(_kSens);
+      repSensitivity =
+          sens != null && repSensitivityModes.contains(sens) ? sens : 'NORMAL';
     } catch (_) {
       // Unreadable storage: keep defaults rather than crash the app.
     }
@@ -74,6 +91,7 @@ class AppSettings extends ChangeNotifier {
       await prefs.setString(_kFlash, hitFlash);
       await prefs.setBool(_kParticles, particles);
       await prefs.setBool(_kHaptics, haptics);
+      await prefs.setString(_kSens, repSensitivity);
     } catch (_) {}
   }
 
@@ -113,5 +131,12 @@ class AppSettings extends ChangeNotifier {
   Future<void> setHaptics(bool value) {
     if (value == haptics) return Future.value();
     return _set(() => haptics = value);
+  }
+
+  Future<void> setRepSensitivity(String mode) {
+    if (!repSensitivityModes.contains(mode) || mode == repSensitivity) {
+      return Future.value();
+    }
+    return _set(() => repSensitivity = mode);
   }
 }

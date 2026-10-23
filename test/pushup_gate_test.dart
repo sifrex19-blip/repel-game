@@ -199,4 +199,75 @@ void main() {
     );
     expect(gate.evaluate(sample), PushupVerdict.ok);
   });
+
+  group('VerdictHoldFilter — glitch tolerance (M6)', () {
+    final t0 = DateTime(2026, 1, 1, 12);
+    DateTime at(int ms) => t0.add(Duration(milliseconds: ms));
+
+    test('a single-frame glitch does not interrupt', () {
+      final f = VerdictHoldFilter();
+      expect(f.filter(PushupVerdict.ok, at(0)), PushupVerdict.ok);
+      // One 33ms bad frame (hip blinks out, wrist flickers)…
+      expect(f.filter(PushupVerdict.noHips, at(33)), PushupVerdict.ok);
+      // …then good frames again: the streak died with the glitch.
+      expect(f.filter(PushupVerdict.ok, at(66)), PushupVerdict.ok);
+      expect(f.filter(PushupVerdict.noHips, at(99)), PushupVerdict.ok);
+    });
+
+    test('a sustained bad pose interrupts after the hold window', () {
+      final f = VerdictHoldFilter();
+      expect(f.filter(PushupVerdict.handsUp, at(0)), PushupVerdict.ok);
+      expect(f.filter(PushupVerdict.handsUp, at(100)), PushupVerdict.ok);
+      // 300ms of continuous handsUp = a standing wave, not detector noise.
+      expect(f.filter(PushupVerdict.handsUp, at(300)), PushupVerdict.handsUp);
+      expect(f.filter(PushupVerdict.handsUp, at(400)), PushupVerdict.handsUp);
+    });
+
+    test('any ok frame clears the streak (flicker never accumulates)', () {
+      // Two seconds of bad/ok alternation every 100ms — the flickery
+      // pattern real cameras produce — must never interrupt.
+      final f = VerdictHoldFilter();
+      var t = 0;
+      for (var i = 0; i < 10; i++) {
+        expect(f.filter(PushupVerdict.upright, at(t)), PushupVerdict.ok);
+        t += 100;
+        expect(f.filter(PushupVerdict.ok, at(t)), PushupVerdict.ok);
+        t += 100;
+      }
+    });
+
+    test('a changed failure kind restarts the window', () {
+      final f = VerdictHoldFilter();
+      f.filter(PushupVerdict.noHips, at(0));
+      expect(f.filter(PushupVerdict.noHips, at(250)), PushupVerdict.ok);
+      // The failure changes shape — the pose changed, start the clock over.
+      expect(f.filter(PushupVerdict.handsUp, at(260)), PushupVerdict.ok);
+      expect(f.filter(PushupVerdict.handsUp, at(559)), PushupVerdict.ok);
+      expect(f.filter(PushupVerdict.handsUp, at(560)), PushupVerdict.handsUp);
+    });
+
+    test('a custom hold window is respected (REP SENSITIVITY)', () {
+      final strict = VerdictHoldFilter(
+          hold: const Duration(milliseconds: 150));
+      strict.filter(PushupVerdict.tooSmall, at(0));
+      expect(
+          strict.filter(PushupVerdict.tooSmall, at(150)), PushupVerdict.tooSmall);
+
+      final forgiving = VerdictHoldFilter(
+          hold: const Duration(milliseconds: 600));
+      forgiving.filter(PushupVerdict.tooSmall, at(0));
+      expect(forgiving.filter(PushupVerdict.tooSmall, at(300)),
+          PushupVerdict.ok);
+      expect(forgiving.filter(PushupVerdict.tooSmall, at(600)),
+          PushupVerdict.tooSmall);
+    });
+
+    test('reset clears a pending streak', () {
+      final f = VerdictHoldFilter();
+      f.filter(PushupVerdict.handsUp, at(0));
+      f.filter(PushupVerdict.handsUp, at(290));
+      f.reset();
+      expect(f.filter(PushupVerdict.handsUp, at(295)), PushupVerdict.ok);
+    });
+  });
 }

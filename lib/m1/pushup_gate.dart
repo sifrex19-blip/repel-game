@@ -143,3 +143,54 @@ class PushupGate {
     return PushupVerdict.ok;
   }
 }
+
+/// Temporal consensus for [PushupGate] verdicts (M6 hardening).
+///
+/// The gate judges ONE frame, and camera detectors flicker: a wrist
+/// blinks below confidence for 33ms, a hip leaves frame for a moment at
+/// the bottom of a deep rep, one shoulder y jitters at the top. If the
+/// counter obeyed every single failing frame it would drop real reps at
+/// exactly the worst moments.
+///
+/// This filter turns the per-frame stream into a decision: a failing
+/// verdict only counts once it has persisted CONTINUOUSLY for [hold]
+/// (default 300ms ≈ 9 frames at 30fps). Any `ok` frame in between clears
+/// the streak — flicker is detector noise, not a pose. A cheat has no
+/// ok frames: standing and waving stays `handsUp` for as long as you
+/// stand there, so it still interrupts within the window.
+///
+/// Pure time logic, no ML Kit types — fully unit-tested.
+class VerdictHoldFilter {
+  VerdictHoldFilter({this.hold = const Duration(milliseconds: 300)});
+
+  /// How long a failing verdict must persist before it takes effect.
+  final Duration hold;
+
+  DateTime? _since;
+  PushupVerdict _last = PushupVerdict.ok;
+
+  /// Filters [raw] at time [at]. Pass [hold] to override the default
+  /// window (Settings → REP SENSITIVITY binds to it).
+  PushupVerdict filter(PushupVerdict raw, DateTime at, {Duration? hold}) {
+    final window = hold ?? this.hold;
+    if (raw == PushupVerdict.ok) {
+      _since = null;
+      _last = PushupVerdict.ok;
+      return PushupVerdict.ok;
+    }
+    // A streak tracks ONE kind of failure; a different failure restarting
+    // means the pose changed, so the clock starts over for it.
+    if (_since == null || raw != _last) {
+      _since = at;
+      _last = raw;
+      return PushupVerdict.ok;
+    }
+    if (at.difference(_since!) >= window) return raw;
+    return PushupVerdict.ok; // grace: the bad pose must persist
+  }
+
+  void reset() {
+    _since = null;
+    _last = PushupVerdict.ok;
+  }
+}

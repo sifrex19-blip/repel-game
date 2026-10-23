@@ -147,6 +147,13 @@ private (camera frames never leave the phone — good marketing point), and free
   App icons, store listings, screenshots, privacy policy (camera usage!),
   TestFlight + Play Console closed testing, then public release
 
+- **M6 — Detection hardening** *(2026-10-23)*
+  Pose-gate glitch tolerance (a bad pose must persist before counting
+  pauses — single flickery frames can no longer drop real reps), missing
+  bodies now pause counting too, per-arm outlier rejection (the confident
+  arm wins when the two disagree wildly), and a REP SENSITIVITY setting
+  (STRICT / NORMAL / FORGIVING) so the hold window is tunable on-device
+
 ## 8. Open Questions (decide before/during M2)
 
 1. **Name** — ideas: *Repel* (rep + repel), *Pushup Siege*, *Flex Defense*, *Reps vs. Monsters*

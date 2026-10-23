@@ -44,6 +44,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   final _service = PoseDetectorService();
   final _counter = PushupCounter();
   final _gate = const PushupGate();
+
+  /// Temporal consensus on gate verdicts: a bad pose must persist before
+  /// counting pauses, so single-frame detector flicker can't drop reps.
+  final _verdictHold = VerdictHoldFilter();
   final _game = RepelGame();
 
   /// Display rotation in degrees (0/90/180/270) as reported by Android's
@@ -174,8 +178,17 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
         _elbowAngle = angle;
         // Cheat gate: only a body plausibly IN a front-view pushup may
         // feed the counter — waving your hands upright is rejected here.
-        _verdict = _gate.evaluate(_gateSampleOf(pose));
-        if (_verdict != PushupVerdict.ok) {
+        // The HUD shows the raw verdict instantly (coaching is immediate);
+        // the counter only obeys the temporally-filtered one, so a single
+        // flickery frame can't drop a real rep (M6).
+        final raw = _gate.evaluate(_gateSampleOf(pose));
+        _verdict = raw;
+        final effective = _verdictHold.filter(
+          raw,
+          _lastPoseAt!,
+          hold: AppSettings.instance.gateHold,
+        );
+        if (effective != PushupVerdict.ok) {
           _counter.interrupt(); // faked pose can't complete a half-cycle
         } else if (angle != null) {
           final reps = _counter.update(angle, _lastPoseAt!);
@@ -190,7 +203,16 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
         _elbowAngle = null;
         _leftArm = 0;
         _rightArm = 0;
+        // No body: coach immediately, but only pause counting when it
+        // persists — a momentary detection dropout mid-rep is not a rep
+        // end (M6; previously missing-body frames never interrupted).
         _verdict = PushupVerdict.noBody;
+        final effective = _verdictHold.filter(
+          PushupVerdict.noBody,
+          DateTime.now(),
+          hold: AppSettings.instance.gateHold,
+        );
+        if (effective != PushupVerdict.ok) _counter.interrupt();
       }
     });
   }
@@ -224,12 +246,14 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
     setState(() => _shopOpen = false);
   }
 
-  /// Average elbow angle across whichever arms are confidently visible.
-  /// Also records per-arm visibility (0 = not seen, 1 = seen but shaky,
-  /// 2 = confident) for the HUD's arm indicators — wrists near the frame
-  /// edge are the usual reason no angle (and therefore no rep) exists.
+  /// Fused elbow angle across whichever arms are confidently visible —
+  /// confidence-weighted, and when the two arms wildly disagree the more
+  /// confident one wins (M6; a mis-tracked wrist no longer poisons the
+  /// average). Also records per-arm visibility (0 = not seen, 1 = seen but
+  /// shaky, 2 = confident) for the HUD's arm indicators — wrists near the
+  /// frame edge are the usual reason no angle (and therefore no rep) exists.
   double? _elbowAngleOf(Pose pose) {
-    final angles = <double>[];
+    final readings = <ArmReading>[];
     _leftArm = 0;
     _rightArm = 0;
     var armIndex = 0;
@@ -267,17 +291,19 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
       }
       armIndex++;
       if (state == 0) continue;
-      angles.add(computeAngle(
-        ax: shoulder.x,
-        ay: shoulder.y,
-        bx: elbow.x,
-        by: elbow.y,
-        cx: wrist.x,
-        cy: wrist.y,
+      readings.add(ArmReading(
+        computeAngle(
+          ax: shoulder.x,
+          ay: shoulder.y,
+          bx: elbow.x,
+          by: elbow.y,
+          cx: wrist.x,
+          cy: wrist.y,
+        ),
+        minLikelihood,
       ));
     }
-    if (angles.isEmpty) return null;
-    return angles.reduce((a, b) => a + b) / angles.length;
+    return combineArmAngles(readings);
   }
 
   /// One-line status for the hero HUD panel.
