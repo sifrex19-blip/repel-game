@@ -1,0 +1,38 @@
+name: iOS build (unsigned ipa)
+
+# Apple only lets you compile iOS apps on macOS, so the .ipa is built on a
+# macOS runner in the cloud instead of your Windows PC.
+#
+# The output is an UNSIGNED ipa (no Apple Developer account needed here).
+# To get it onto an actual iPhone you sign it afterwards — the easiest
+# free path is AltStore: it re-signs the ipa with your own Apple ID
+# (installs expire after 7 days and can be refreshed), or you can sign
+# with a paid Apple Developer account for permanent installs/TestFlight.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build unsigned ipa
+        run: flutter build ipa --release --no-codesign
+
+      - name: Upload ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repel-unsigned-ipa
+          path: build/ios/ipa/*.ipa
