@@ -14,18 +14,33 @@ import 'repel_game.dart';
 /// press *into* the panel, a segmented rest bar, and purchase feedback that
 /// floats off the card.
 class ShopPanel extends StatelessWidget {
-  const ShopPanel({super.key, required this.game});
+  const ShopPanel({
+    super.key,
+    required this.game,
+    this.forceShow = false,
+    this.onClose,
+  });
 
   final RepelGame game;
+
+  /// True while the zone-toolbar SHOP button holds the shop open outside
+  /// the between-waves phase (the engine is paused behind it). The panel
+  /// then shows a CLOSE button instead of the wave buttons.
+  final bool forceShow;
+
+  /// Closes the forced shop (toolbar path); unused in normal flow.
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<GameSnapshot>(
       valueListenable: game.snapshot,
       builder: (context, snap, _) {
-        final showShop =
-            snap.phase == GamePhase.waveCleared || snap.phase == GamePhase.defeat;
+        final natural = snap.phase == GamePhase.waveCleared ||
+            snap.phase == GamePhase.defeat;
+        final showShop = natural || forceShow;
         if (!showShop) return const SizedBox.shrink();
+        final forced = forceShow && !natural;
 
         final defeated = snap.phase == GamePhase.defeat;
         final landscape =
@@ -51,7 +66,12 @@ class ShopPanel extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _Header(game: game, snap: snap, defeated: defeated),
+                      _Header(
+                        game: game,
+                        snap: snap,
+                        defeated: defeated,
+                        forced: forced,
+                      ),
                       const SizedBox(height: 14),
                       // Upgrade cards — a row on landscape, stacked otherwise.
                       if (landscape)
@@ -89,16 +109,26 @@ class ShopPanel extends StatelessWidget {
                       SizedBox(
                         width: double.infinity,
                         child: PixelButton(
-                          fill: defeated ? kRed : kOrange,
+                          fill: forced
+                              ? kPanelDark
+                              : defeated
+                                  ? kRed
+                                  : kOrange,
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           onPressed: () {
                             HapticFeedback.mediumImpact();
-                            defeated ? game.retryWave() : game.nextWave();
+                            if (forced) {
+                              onClose?.call();
+                            } else {
+                              defeated ? game.retryWave() : game.nextWave();
+                            }
                           },
                           label: Text(
-                            defeated
-                                ? 'RETRY WAVE ${snap.wave}'
-                                : 'START NEXT WAVE',
+                            forced
+                                ? 'CLOSE'
+                                : defeated
+                                    ? 'RETRY WAVE ${snap.wave}'
+                                    : 'START NEXT WAVE',
                             style: pixelText(12, kWhite, shadow: 2),
                           ),
                         ),
@@ -135,11 +165,19 @@ class ShopPanel extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.game, required this.snap, required this.defeated});
+  const _Header({
+    required this.game,
+    required this.snap,
+    required this.defeated,
+    required this.forced,
+  });
 
   final RepelGame game;
   final GameSnapshot snap;
   final bool defeated;
+
+  /// Forced shop (opened from the zone toolbar mid-run).
+  final bool forced;
 
   @override
   Widget build(BuildContext context) {
@@ -153,10 +191,14 @@ class _Header extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                defeated ? 'BASE DESTROYED' : 'WAVE ${snap.wave} CLEARED',
+                defeated
+                    ? 'BASE DESTROYED'
+                    : forced
+                        ? 'SHOP'
+                        : 'WAVE ${snap.wave} CLEARED',
                 style: pixelText(16, defeated ? kRed : kWhite, shadow: 2),
               ),
-              if (!defeated) ...[
+              if (!defeated && !forced) ...[
                 const SizedBox(height: 8),
                 // Rest countdown — tapping it starts the wave early,
                 // exactly as the subtitle promises.
@@ -196,10 +238,16 @@ class _Header extends StatelessWidget {
                     ],
                   ),
                 ),
-              ] else ...[
+              ] else if (defeated) ...[
                 const SizedBox(height: 5),
                 Text(
                   'Best wave ${snap.bestWave} — upgrade and go again',
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+              ] else ...[
+                const SizedBox(height: 5),
+                Text(
+                  'Upgrades are bought with pushup coins',
                   style: const TextStyle(fontSize: 12, color: Colors.white70),
                 ),
               ],

@@ -134,6 +134,12 @@ class PushupCounter {
     }
   }
 
+  /// Drops the current partial cycle WITHOUT losing calibration or the rep
+  /// total — called when the pose gate decides the body isn't plausibly in
+  /// a pushup, so a faked arm-wave can never complete a half-cycle that a
+  /// real rep would then finish.
+  void interrupt() => _phase = PushupPhase.unknown;
+
   void reset() {
     reps = 0;
     _phase = PushupPhase.unknown;

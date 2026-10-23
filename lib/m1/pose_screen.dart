@@ -17,6 +17,7 @@ import '../settings_panel.dart';
 import 'pose_detector_service.dart';
 import 'pose_overlay.dart';
 import 'pushup_counter.dart';
+import 'pushup_gate.dart';
 
 /// Live camera preview + pose skeleton + pushup counter (M1) with the M2
 /// combat game rendered transparently on top: every counted rep fires at
@@ -41,6 +42,7 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
 
   final _service = PoseDetectorService();
   final _counter = PushupCounter();
+  final _gate = const PushupGate();
   final _game = RepelGame();
 
   /// Display rotation in degrees (0/90/180/270) as reported by Android's
@@ -55,6 +57,9 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   /// 2 = confident (see [_elbowAngleOf]).
   int _leftArm = 0;
   int _rightArm = 0;
+
+  /// Latest verdict of the anti-cheat pose gate (front-view pushup check).
+  PushupVerdict _verdict = PushupVerdict.noBody;
   double _inferenceFps = 0;
   int _fpsCounter = 0;
   DateTime _fpsWindow = DateTime.now();
@@ -66,6 +71,15 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   DateTime _frameWindow = DateTime.now();
 
   bool _showSettings = false;
+  bool _showMore = false;
+
+  /// True while the toolbar SHOP button holds the shop open mid-run
+  /// (the game engine is paused behind it).
+  bool _shopOpen = false;
+
+  /// Zone toolbar height — the seam bar between game (top) and camera
+  /// (bottom) that hosts SETTINGS / SHOP / MORE.
+  static const _toolbarH = 40.0;
 
   @override
   void initState() {
@@ -157,7 +171,12 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
         _lastPoseAt = DateTime.now();
         final angle = _elbowAngleOf(pose);
         _elbowAngle = angle;
-        if (angle != null) {
+        // Cheat gate: only a body plausibly IN a front-view pushup may
+        // feed the counter — waving your hands upright is rejected here.
+        _verdict = _gate.evaluate(_gateSampleOf(pose));
+        if (_verdict != PushupVerdict.ok) {
+          _counter.interrupt(); // faked pose can't complete a half-cycle
+        } else if (angle != null) {
           final reps = _counter.update(angle, _lastPoseAt!);
           if (reps != null) {
             _game.onRep(); // a counted pushup = one shot at the monsters
@@ -168,8 +187,38 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
         _elbowAngle = null;
         _leftArm = 0;
         _rightArm = 0;
+        _verdict = PushupVerdict.noBody;
       }
     });
+  }
+
+  /// Builds the gate's view of the body from ML Kit landmarks.
+  GateSample _gateSampleOf(Pose pose) {
+    GatePoint? p(PoseLandmarkType t) {
+      final l = pose.landmarks[t];
+      return l == null ? null : GatePoint(l.x, l.y, l.likelihood);
+    }
+
+    return GateSample(
+      shoulderL: p(PoseLandmarkType.leftShoulder),
+      shoulderR: p(PoseLandmarkType.rightShoulder),
+      wristL: p(PoseLandmarkType.leftWrist),
+      wristR: p(PoseLandmarkType.rightWrist),
+      hipL: p(PoseLandmarkType.leftHip),
+      hipR: p(PoseLandmarkType.rightHip),
+    );
+  }
+
+  /// Toolbar SHOP: pauses the engine and holds the shop open mid-run.
+  void _openShop() {
+    HapticFeedback.selectionClick();
+    _game.pauseEngine();
+    setState(() => _shopOpen = true);
+  }
+
+  void _closeShop() {
+    _game.resumeEngine();
+    setState(() => _shopOpen = false);
   }
 
   /// Average elbow angle across whichever arms are confidently visible.
@@ -272,7 +321,10 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   }
 
   /// Form-meter status: what to do right now, in the player's terms.
+  /// The cheat gate outranks everything — if the body isn't plausibly in
+  /// a pushup, say why (and how to fix it) before any angle coaching.
   String _formStatus() {
+    if (_verdict != PushupVerdict.ok) return verdictMessage(_verdict);
     if (!_counter.isCalibrated) return 'CALIBRATING…';
     return switch (_counter.phase) {
       PushupPhase.down => 'PUSH UP!',
@@ -282,6 +334,9 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
   }
 
   Color _formStatusColor() {
+    if (_verdict != PushupVerdict.ok) {
+      return _verdict == PushupVerdict.noBody ? kDimText : kOrange;
+    }
     if (!_counter.isCalibrated) return kOrange;
     return switch (_counter.phase) {
       PushupPhase.down => kOrange,
@@ -289,6 +344,14 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
       PushupPhase.unknown => kWhite,
     };
   }
+
+  /// BODY dot on the form meter: 2 = pose gate says "real pushup pose",
+  /// 1 = body seen but rejected, 0 = nothing usable in frame.
+  int get _bodyState => switch (_verdict) {
+        PushupVerdict.ok => 2,
+        PushupVerdict.noBody => 0,
+        _ => 1,
+      };
 
   /// Angle bar: 60° (bent) → 180° (straight) with the learned down/up
   /// threshold ticks — the direct answer to "why didn't that count?".
@@ -437,19 +500,48 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
             child: CameraPreview(widget.controller),
           ),
 
-          // Pixel divider: ink bar with a beveled highlight, pinned to the
-          // seam so the two zones never bleed into each other.
+          // Zone toolbar: the seam between the game (top) and the camera
+          // (bottom) is a bar with SETTINGS / SHOP / MORE.
           Positioned(
             left: 0,
             right: 0,
-            top: camZone.top - 4,
+            top: camZone.top,
             child: Container(
-              height: 4,
+              height: _toolbarH,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: const BoxDecoration(
+                color: kInk,
                 border: Border(
                   top: BorderSide(color: kPanelLight, width: 1),
-                  bottom: BorderSide(color: kInk, width: 3),
+                  bottom: BorderSide(color: kPanelDark, width: 3),
                 ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  PixelButton(
+                    fill: kPanelDark,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 5),
+                    onPressed: () => setState(() => _showSettings = true),
+                    label: Text('SETTINGS', style: pixelText(8, kWhite)),
+                  ),
+                  PixelButton(
+                    fill: kPanelDark,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 5),
+                    onPressed: _openShop,
+                    label: Text('SHOP', style: pixelText(8, kGold)),
+                  ),
+                  PixelButton(
+                    fill: kPanelDark,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 5),
+                    onPressed: () => setState(() => _showMore = true),
+                    label: Text('MORE', style: pixelText(8, kWhite)),
+                  ),
+                ],
               ),
             ),
           ),
@@ -596,13 +688,14 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
             ),
           ),
 
-          // Pushup form meter — top of the camera band, always visible: arm
-          // visibility, live elbow angle, and where the down/up thresholds
-          // sit, so you can SEE why a rep did or didn't count.
+          // Pushup form meter — just below the zone toolbar, always
+          // visible: body-gate verdict, arm visibility, live elbow angle,
+          // and where the down/up thresholds sit, so you can SEE why a rep
+          // did or didn't count.
           Positioned(
             left: 0,
             right: 0,
-            top: camZone.top + 8,
+            top: camZone.top + _toolbarH + 6,
             child: Center(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -615,6 +708,8 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                     children: [
                       Row(
                         children: [
+                          _armDot('B', _bodyState),
+                          const SizedBox(width: 8),
                           _armDot('L', _leftArm),
                           const SizedBox(width: 8),
                           _armDot('R', _rightArm),
@@ -702,6 +797,11 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
                         ),
                         const SizedBox(height: 4),
                         Text(
+                          'GATE ${_verdict.name.toUpperCase()}',
+                          style: pixelText(7, kDimText),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
                           '${_counter.phase.name.toUpperCase()} · CAL '
                           '${_counter.isCalibrated ? "${_counter.downAngle!.toStringAsFixed(0)}/${_counter.upAngle!.toStringAsFixed(0)}°" : "--"}',
                           style: pixelText(7, kDimText),
@@ -751,59 +851,83 @@ class _PoseScreenState extends State<PoseScreen> with WidgetsBindingObserver {
               ),
             ),
 
-          // Controls (bottom right) over the camera band: settings gear +
-          // counter reset — the game HUD never reaches down here.
-          SafeArea(
-            child: Align(
-              alignment: Alignment.bottomRight,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    PixelGearButton(
-                      onPressed: () => setState(() => _showSettings = true),
-                    ),
-                    const SizedBox(width: 10),
-                    Tooltip(
-                      message: 'Reset counter',
-                      child: GestureDetector(
-                        onTap: () => setState(() => _counter.reset()),
-                        child: Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xCC0D0B14),
-                            border: Border.all(color: kInk, width: 2),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: kInk,
-                                offset: Offset(0, 3),
-                                blurRadius: 0,
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.refresh,
-                            size: 22,
-                            color: kWhite,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
           // M4: level select / victory overlays — each hides itself unless
           // its phase is active, so they never overlap the shop.
           MenuPanel(game: _game),
           VictoryPanel(game: _game),
 
           // M3: between-waves shop / defeat screen — topmost layer so it
-          // covers the HUD while the player rests and shops.
-          ShopPanel(game: _game),
+          // covers the HUD while the player rests and shops. forceShow:
+          // the toolbar SHOP button holds it open mid-run (engine paused).
+          ShopPanel(
+            game: _game,
+            forceShow: _shopOpen,
+            onClose: _closeShop,
+          ),
+
+          // MORE popup: reset the counter / exit to menu.
+          if (_showMore) ...[
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _showMore = false),
+                child: Container(color: const Color(0x730D0B14)),
+              ),
+            ),
+            Center(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {}, // taps inside don't fall through to close
+                child: PixelPanel(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('MORE', style: pixelText(10, kWhite)),
+                      const SizedBox(height: 12),
+                      PixelButton(
+                        fill: kPanelDark,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 8),
+                        onPressed: () {
+                          HapticFeedback.selectionClick();
+                          setState(() {
+                            _counter.reset();
+                            _showMore = false;
+                          });
+                        },
+                        label:
+                            Text('RESET COUNTER', style: pixelText(8, kWhite)),
+                      ),
+                      const SizedBox(height: 8),
+                      PixelButton(
+                        fill: kPanelDark,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 8),
+                        onPressed: () {
+                          HapticFeedback.mediumImpact();
+                          setState(() {
+                            _game.toMenu();
+                            _showMore = false;
+                          });
+                        },
+                        label:
+                            Text('EXIT TO MENU', style: pixelText(8, kOrange)),
+                      ),
+                      const SizedBox(height: 8),
+                      PixelButton(
+                        fill: kPanelDark,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 8),
+                        onPressed: () => setState(() => _showMore = false),
+                        label: Text('CLOSE', style: pixelText(8, kDimText)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
 
           // Settings (debug overlay switches) — above everything so the
           // gear works even while a panel is open.

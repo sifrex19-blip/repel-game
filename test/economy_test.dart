@@ -78,6 +78,20 @@ void main() {
       expect(killCoins(3, boss: false), 6);
       expect(killCoins(3, boss: true), 34);
     });
+
+    test('every pushup pays coins; big combos pay double', () {
+      // Upgrades are bought with pushups: 1 coin per rep, 2 once the
+      // combo multiplier reaches ×1.5.
+      expect(repCoins(1), 1);
+      expect(repCoins(5), 1); // ×1.4
+      expect(repCoins(6), 2); // ×1.5
+      expect(repCoins(11), 2); // ×2.0 cap
+      expect(repCoins(999), 2); // hard cap
+      // Never zero: idle training always pays.
+      for (var c = 1; c <= 20; c++) {
+        expect(repCoins(c), greaterThanOrEqualTo(1));
+      }
+    });
   });
 
   group('PlayerSave.buy', () {

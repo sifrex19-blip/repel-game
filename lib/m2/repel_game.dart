@@ -284,6 +284,18 @@ class RepelGame extends FlameGame with TapCallbacks {
     if (combo > save.bestCombo) save.bestCombo = combo;
     _markDirty();
 
+    // Every pushup pays coins — upgrades are bought with pushups, so the
+    // shop currency is earned directly from the workout (even with an
+    // empty field: idle training still pays).
+    final gained = repCoins(combo);
+    save.coins += gained;
+    add(FloatingText(
+      position: Vector2(gateX, groundY - 76),
+      text: '+$gained',
+      color: kGold,
+      coin: true,
+    ));
+
     final damage =
         (repDamage(save.levelOf(UpgradeType.power)) * comboMultiplier(combo))
             .round();
@@ -302,6 +314,7 @@ class RepelGame extends FlameGame with TapCallbacks {
     add(Projectile(
       start: Vector2(gateX, groundY - 46),
       target: target.position.clone(),
+      small: true, // rep shots are small gold darts (auto shots = blue)
     ));
     target.takeHit(damage);
     _publish();

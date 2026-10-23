@@ -247,6 +247,7 @@ class Projectile extends PositionComponent with HasGameReference<RepelGame> {
     required Vector2 start,
     required this.target,
     this.auto = false,
+    this.small = false,
   })  : _dir = (target - start).normalized(),
         super(position: start, anchor: Anchor.center);
 
@@ -254,8 +255,12 @@ class Projectile extends PositionComponent with HasGameReference<RepelGame> {
 
   /// True for automatic chip-damage shots (cooler color to tell them apart).
   final bool auto;
+
+  /// True for pushup rep shots: a small, fast gold dart with a hot white
+  /// core — visibly different from the chunky blue auto tracer.
+  final bool small;
   final Vector2 _dir;
-  static const _speed = 640.0;
+  double get _speed => small ? 860.0 : 640.0;
 
   Color get _color =>
       auto ? const Color(0xFF4FC3F7) : const Color(0xFFFFAB40);
@@ -265,7 +270,7 @@ class Projectile extends PositionComponent with HasGameReference<RepelGame> {
     final toTarget = target - position;
     final step = _speed * dt;
     if (toTarget.length <= step) {
-      game.spawnSparks(position, _color, count: 3, spread: 70);
+      game.spawnSparks(position, _color, count: small ? 2 : 3, spread: 70);
       removeFromParent();
       return;
     }
@@ -276,6 +281,25 @@ class Projectile extends PositionComponent with HasGameReference<RepelGame> {
   void render(Canvas canvas) {
     final color = _color;
     final paint = Paint()..isAntiAlias = false;
+
+    if (small) {
+      // Pushup rep dart: one trailing pixel, 5px gold head, 2px white core.
+      paint.color = color.withValues(alpha: 0.45);
+      canvas.drawRect(
+        Rect.fromLTWH(
+          (-_dir.x * 7 - 1.5).roundToDouble(),
+          (-_dir.y * 7 - 1.5).roundToDouble(),
+          3,
+          3,
+        ),
+        paint,
+      );
+      paint.color = color;
+      canvas.drawRect(const Rect.fromLTWH(-2.5, -2.5, 5, 5), paint);
+      paint.color = kWhite;
+      canvas.drawRect(const Rect.fromLTWH(-1, -1, 2, 2), paint);
+      return;
+    }
 
     // Trailing pixels — quantized alpha, chunky, no glow gradient.
     paint.color = color.withValues(alpha: 0.30);

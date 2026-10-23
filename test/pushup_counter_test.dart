@@ -184,6 +184,31 @@ void main() {
       expect(c.phase, PushupPhase.unknown);
     });
 
+    test('interrupt drops the half-cycle but keeps calibration and reps',
+        () {
+      final c = counter();
+      feed(c, 170, t0);
+      feed(c, 90, t0.add(const Duration(seconds: 1)));
+      feed(c, 170, t0.add(const Duration(seconds: 2))); // rep 1
+      expect(c.reps, 1);
+      expect(c.phase, PushupPhase.up);
+
+      // A faked pose frame mid-set: the half-cycle must not survive, but
+      // calibration and the rep total must.
+      feed(c, 90, t0.add(const Duration(seconds: 3))); // down again
+      c.interrupt();
+      expect(c.phase, PushupPhase.unknown);
+      expect(c.reps, 1);
+      expect(c.isCalibrated, isTrue);
+
+      // Re-arm at the top and finish another honest rep.
+      feed(c, 170, t0.add(const Duration(seconds: 4)));
+      expect(c.phase, PushupPhase.up);
+      feed(c, 90, t0.add(const Duration(seconds: 5)));
+      feed(c, 170, t0.add(const Duration(seconds: 6))); // rep 2
+      expect(c.reps, 2);
+    });
+
     test('reset clears everything', () {
       final c = counter();
       feed(c, 170, t0);

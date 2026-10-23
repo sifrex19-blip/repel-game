@@ -37,6 +37,11 @@ int waveClearCoins(int wave) => 10 + 5 * wave;
 int killCoins(int wave, {required bool boss}) =>
     boss ? 25 + 3 * wave : 3 + wave;
 
+/// Coins earned per counted pushup — upgrades are bought with pushups, so
+/// every rep pays the shop currency directly (combo scales it like damage:
+/// ×1.5 and up → 2 coins).
+int repCoins(int comboCount) => comboMultiplier(comboCount) >= 1.5 ? 2 : 1;
+
 int _baseCost(UpgradeType t) => switch (t) {
       UpgradeType.power => 10,
       UpgradeType.speed => 15,
